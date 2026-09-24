@@ -111,7 +111,7 @@ INSERT OR IGNORE INTO categorias_odio (nome, ordem) VALUES
   ('Gordofobia', 3),
   ('Capacitismo', 4),
   ('LGBTfobia', 5),
-  ('Misoginia', 6),
+  ('Sexismo', 6),
   ('Ódio Político', 7),
   ('Racismo', 8),
   ('Intolerância Religiosa', 9),

@@ -29,7 +29,7 @@ export function createDatabase(filename = process.env.DB_PATH || join(dataDir, '
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_avaliadores_username ON avaliadores(username COLLATE NOCASE) WHERE username IS NOT NULL;');
   db.prepare("UPDATE categorias_odio SET nome = 'Classismo' WHERE nome = 'Aporofobia'").run();
   db.prepare("UPDATE categorias_odio SET nome = 'Gordofobia' WHERE nome = 'Body Shaming'").run();
-  db.prepare("UPDATE categorias_odio SET nome = 'Misoginia' WHERE nome = 'Sexismo' AND NOT EXISTS (SELECT 1 FROM categorias_odio WHERE nome = 'Misoginia')").run();
+  db.prepare("UPDATE categorias_odio SET nome = 'Sexismo' WHERE nome = 'Misoginia' AND NOT EXISTS (SELECT 1 FROM categorias_odio WHERE nome = 'Sexismo')").run();
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessoes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

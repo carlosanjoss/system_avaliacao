@@ -71,9 +71,9 @@ test('login, CSV, avaliação dupla, reconciliação e exportação', async () =
     const categories = await json('/avaliacoes/categorias', {}, firstSession.cookie);
     const items = await json(`/lotes/${lote.id}/itens`, {}, adminSession.cookie);
     const etarismo = categories.find((category) => category.nome === 'Etarismo');
-    const misoginia = categories.find((category) => category.nome === 'Misoginia');
-    assert.ok(etarismo && misoginia);
-    await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: items.items[0].id, classificacao: 'hate', categorias: [etarismo.id, misoginia.id] }) }, firstSession.cookie);
+    const sexismo = categories.find((category) => category.nome === 'Sexismo');
+    assert.ok(etarismo && sexismo);
+    await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: items.items[0].id, classificacao: 'hate', categorias: [etarismo.id, sexismo.id] }) }, firstSession.cookie);
     await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: items.items[0].id, classificacao: 'nao_hate', categorias: [] }) }, secondSession.cookie);
     await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: items.items[1].id, classificacao: 'nao_hate', categorias: [] }) }, firstSession.cookie);
     await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: items.items[1].id, classificacao: 'nao_hate', categorias: [] }) }, secondSession.cookie);
@@ -98,7 +98,7 @@ test('login, CSV, avaliação dupla, reconciliação e exportação', async () =
     assert.match(csv, /avaliador_1_classificacao/);
     assert.match(csv, /decisao_final/);
     assert.match(csv, /Racismo/);
-    assert.match(csv, /Etarismo \| Misoginia/);
+    assert.match(csv, /Etarismo \| Sexismo/);
 
     const evaluatorLots = await json('/lotes', {}, firstSession.cookie);
     assert.equal(evaluatorLots.length, 1);
