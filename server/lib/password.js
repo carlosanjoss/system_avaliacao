@@ -11,6 +11,13 @@ export function createPasswordHash(password, salt = randomBytes(16).toString('he
   return { hash: scryptSync(password, salt, 64).toString('hex'), salt };
 }
 
+export function generateTemporaryPassword() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const bytes = randomBytes(12);
+  const body = [...bytes].map((byte) => alphabet[byte % alphabet.length]).join('');
+  return `${body.slice(0, 4)}@${body.slice(4, 8)}#${body.slice(8)}7aA`;
+}
+
 export function verifyPassword(password, salt, storedHash) {
   const candidate = scryptSync(password, salt, 64);
   const expected = Buffer.from(storedHash, 'hex');

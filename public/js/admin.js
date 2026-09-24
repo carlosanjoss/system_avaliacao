@@ -3,18 +3,40 @@ import { clear, confirmAction, el, emptyState, errorMessage, formatDate, modal, 
 
 let cache = { avaliadores: [], lotes: [] };
 
-function generatePassword() {
-  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
-  const bytes = crypto.getRandomValues(new Uint8Array(12));
-  const body = [...bytes].map((byte) => alphabet[byte % alphabet.length]).join('');
-  return `${body.slice(0, 4)}@${body.slice(4, 8)}#${body.slice(8)}7aA`;
-}
-
 function actionButton(label, handler, danger = false) {
   const button = el('button', danger ? 'button-danger !px-3 !py-2' : 'button-secondary !px-3 !py-2', label);
   button.type = 'button';
   button.addEventListener('click', handler);
   return button;
+}
+
+function temporaryCredentialModal(evaluatorName, credentials) {
+  const dialog = modal({ title: 'Credencial temporária', subtitle: `${evaluatorName} deverá criar uma senha pessoal no primeiro acesso.` });
+  const warning = el('div', 'rounded-2xl border border-amber-400/25 bg-amber-400/[.07] p-4 text-xs leading-6 text-amber-600 dark:text-amber-300');
+  warning.textContent = 'Copie e entregue esta credencial agora. A senha temporária não será exibida novamente.';
+  const credentialBox = el('div', 'mt-4 space-y-3 rounded-2xl border border-slate-200 p-4 dark:border-white/[.09]');
+  credentialBox.append(
+    el('p', 'text-xs text-slate-500', 'Usuário'),
+    el('p', 'select-all font-mono text-sm font-extrabold', credentials.username),
+    el('p', 'pt-2 text-xs text-slate-500', 'Senha temporária'),
+    el('p', 'select-all break-all font-mono text-sm font-extrabold text-teal-500', credentials.senhaTemporaria)
+  );
+  const actions = el('div', 'mt-5 flex flex-wrap justify-end gap-3');
+  const copy = el('button', 'button-secondary', 'Copiar credenciais');
+  copy.type = 'button';
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(`Usuário: ${credentials.username}\nSenha temporária: ${credentials.senhaTemporaria}`);
+      toast('Credenciais copiadas.');
+    } catch {
+      toast('Não foi possível copiar. Selecione os dados exibidos.', 'error');
+    }
+  });
+  const close = el('button', 'button-primary', 'Concluído');
+  close.type = 'button';
+  close.addEventListener('click', dialog.destroy);
+  actions.append(copy, close);
+  dialog.body.append(warning, credentialBox, actions);
 }
 
 function statCard(label, value, helper, accent) {
@@ -34,7 +56,7 @@ function panelHeader(title, subtitle, action) {
 }
 
 function evaluatorModal(existing, onSaved) {
-  const dialog = modal({ title: existing ? 'Editar avaliador' : 'Novo avaliador', subtitle: 'O perfil serve apenas para identificação neste protótipo local.' });
+  const dialog = modal({ title: existing ? 'Editar avaliador' : 'Novo avaliador', subtitle: existing ? 'Atualize os dados de identificação e acesso.' : 'Uma senha temporária será gerada automaticamente.' });
   const form = el('form', 'space-y-4');
   const nameWrap = el('label');
   nameWrap.append(el('span', 'field-label', 'Nome completo'), el('input', 'form-field'));
@@ -57,19 +79,6 @@ function evaluatorModal(existing, onSaved) {
   usernameInput.autocomplete = 'off';
   usernameInput.placeholder = 'Ex.: ana.silva';
   usernameInput.value = existing?.username || '';
-  const passwordWrap = el('label');
-  passwordWrap.append(el('span', 'field-label', existing ? 'Nova senha (deixe vazia para manter)' : 'Senha temporária'));
-  const passwordRow = el('div', 'flex gap-2');
-  const passwordInput = el('input', 'form-field');
-  passwordInput.type = 'text';
-  passwordInput.autocomplete = 'new-password';
-  passwordInput.required = !existing || !existing.tem_senha;
-  passwordInput.value = existing ? '' : generatePassword();
-  const generate = el('button', 'button-secondary shrink-0 !px-3', 'Gerar');
-  generate.type = 'button';
-  generate.addEventListener('click', () => { passwordInput.value = generatePassword(); passwordInput.focus(); passwordInput.select(); });
-  passwordRow.append(passwordInput, generate);
-  passwordWrap.append(passwordRow, el('span', 'mt-2 block text-[11px] leading-5 text-slate-500', 'Anote e entregue esta credencial ao avaliador. A senha não será exibida novamente.'));
   const actions = el('div', 'flex justify-end gap-3 pt-3');
   const cancel = el('button', 'button-secondary', 'Cancelar');
   cancel.type = 'button';
@@ -77,18 +86,18 @@ function evaluatorModal(existing, onSaved) {
   const save = el('button', 'button-primary', 'Salvar avaliador');
   save.type = 'submit';
   actions.append(cancel, save);
-  form.append(nameWrap, emailWrap, usernameWrap, passwordWrap, actions);
+  form.append(nameWrap, emailWrap, usernameWrap, actions);
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     save.disabled = true;
     save.textContent = 'Salvando…';
     try {
-      const payload = { nome: nameInput.value, email: emailInput.value, username: usernameInput.value.trim().toLowerCase(), password: passwordInput.value };
-      if (existing) await api.avaliadores.update(existing.id, payload);
-      else await api.avaliadores.create(payload);
+      const payload = { nome: nameInput.value, email: emailInput.value, username: usernameInput.value.trim().toLowerCase() };
+      const result = existing ? await api.avaliadores.update(existing.id, payload) : await api.avaliadores.create(payload);
       dialog.destroy();
       toast(existing ? 'Cadastro atualizado.' : 'Avaliador cadastrado.');
       await onSaved();
+      if (!existing) temporaryCredentialModal(result.nome, result);
     } catch (error) {
       toast(error.message, 'error');
       save.disabled = false;
@@ -120,13 +129,22 @@ function evaluatorTable(onChanged) {
     const identity = el('td');
     const identityWrap = el('div', 'flex items-center gap-3');
     const identityText = el('span');
-    identityText.append(el('span', 'block font-bold', evaluator.nome), el('span', 'mt-1 block text-[11px] text-slate-500', `@${evaluator.username || 'sem-usuario'}`));
+    const nameLine = el('span', 'flex flex-wrap items-center gap-2 font-bold', evaluator.nome);
+    if (evaluator.senha_temporaria) nameLine.append(el('span', 'pill bg-amber-400/10 text-amber-500', 'Troca pendente'));
+    identityText.append(nameLine, el('span', 'mt-1 block text-[11px] text-slate-500', `@${evaluator.username || 'sem-usuario'}`));
     identityWrap.append(el('span', 'grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-teal-400/10 text-xs font-extrabold text-teal-500', evaluator.nome.slice(0, 2).toUpperCase()), identityText);
     identity.append(identityWrap);
     row.append(identity, el('td', 'text-slate-500', evaluator.email), el('td', '', evaluator.lotes_atribuidos), el('td', '', evaluator.avaliacoes_realizadas));
     const actions = el('td');
     const group = el('div', 'flex gap-2');
-    group.append(actionButton('Editar', () => evaluatorModal(evaluator, onChanged)), actionButton('Remover', async () => {
+    group.append(actionButton('Editar', () => evaluatorModal(evaluator, onChanged)), actionButton('Redefinir senha', async () => {
+      if (!await confirmAction('Redefinir senha?', `A senha atual de ${evaluator.nome} deixará de funcionar e todas as sessões serão encerradas.`, 'Gerar senha temporária')) return;
+      try {
+        const credentials = await api.avaliadores.resetPassword(evaluator.id);
+        await onChanged();
+        temporaryCredentialModal(evaluator.nome, credentials);
+      } catch (error) { toast(error.message, 'error'); }
+    }), actionButton('Remover', async () => {
       if (!await confirmAction('Remover avaliador?', `${evaluator.nome} será removido se ainda não possuir avaliações.`, 'Remover')) return;
       try { await api.avaliadores.remove(evaluator.id); toast('Avaliador removido.'); await onChanged(); } catch (error) { toast(error.message, 'error'); }
     }, true));

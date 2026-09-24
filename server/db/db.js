@@ -19,6 +19,7 @@ export function createDatabase(filename = process.env.DB_PATH || join(dataDir, '
     ['username', 'TEXT COLLATE NOCASE'],
     ['senha_hash', 'TEXT'],
     ['senha_salt', 'TEXT'],
+    ['senha_temporaria', 'INTEGER NOT NULL DEFAULT 0 CHECK (senha_temporaria IN (0, 1))'],
     ['papel', "TEXT NOT NULL DEFAULT 'avaliador' CHECK (papel IN ('admin', 'avaliador'))"],
     ['ativo', 'INTEGER NOT NULL DEFAULT 1 CHECK (ativo IN (0, 1))']
   ];
@@ -55,8 +56,8 @@ export function createDatabase(filename = process.env.DB_PATH || join(dataDir, '
     const password = String(process.env.ADMIN_PASSWORD || 'Admin@Radar2026');
     const credentials = createPasswordHash(password);
     db.prepare(`
-      INSERT INTO avaliadores (nome, email, username, senha_hash, senha_salt, papel, ativo)
-      VALUES (?, ?, ?, ?, ?, 'admin', 1)
+      INSERT INTO avaliadores (nome, email, username, senha_hash, senha_salt, senha_temporaria, papel, ativo)
+      VALUES (?, ?, ?, ?, ?, 0, 'admin', 1)
     `).run('Administrador', process.env.ADMIN_EMAIL || 'admin@radar.local', username, credentials.hash, credentials.salt);
   }
   return db;

@@ -2,7 +2,7 @@ import { api } from './api.js';
 import { renderAdmin } from './admin.js';
 import { renderAvaliador, setupAvaliador } from './avaliador.js';
 import { renderAgreement, setupAgreement } from './agreement.js';
-import { renderLogin } from './auth.js';
+import { renderLogin, renderPasswordChange } from './auth.js';
 import { renderExport } from './export.js';
 import { createRouter } from './router.js';
 import { toast } from './ui.js';
@@ -58,7 +58,8 @@ async function initialize() {
     await api.health();
     try {
       const result = await api.auth.me();
-      await activate(result.user);
+      if (result.user.senhaTemporaria) renderPasswordChange(result.user, activate);
+      else await activate(result.user);
     } catch (error) {
       if (error.status !== 401) throw error;
       renderLogin(activate);

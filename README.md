@@ -27,12 +27,15 @@ O PapaParse é servido localmente. Tailwind CSS e Google Fonts continuam por CDN
 ## Fluxo
 
 1. Entre com a conta administrativa.
-2. Cadastre cada avaliador com nome, e-mail, usuário e senha temporária.
-3. Importe um ou mais CSVs e indique explicitamente qual coluna textual será analisada.
-4. Escolha o modo individual ou dupla e os avaliadores responsáveis.
-5. Cada avaliador entra com sua própria conta e realiza apenas os lotes atribuídos.
-6. Em lotes duplos, abra Reconciliação para resolver divergências e consultar Kappa de Cohen.
-7. Baixe o CSV consolidado em Resultados.
+2. Cadastre cada avaliador com nome, e-mail e usuário. O servidor gera uma senha temporária, exibida ao administrador apenas uma vez.
+3. No primeiro login, o avaliador informa a senha temporária e precisa criar uma senha pessoal antes de acessar os lotes.
+4. Importe um ou mais CSVs e indique explicitamente qual coluna textual será analisada.
+5. Escolha o modo individual ou dupla e os avaliadores responsáveis.
+6. Cada avaliador realiza apenas os lotes atribuídos à própria conta.
+7. Em lotes duplos, abra Reconciliação para resolver divergências e consultar Kappa de Cohen.
+8. Baixe o CSV consolidado em Resultados.
+
+Se um avaliador esquecer a senha, use **Redefinir senha** na equipe de avaliadores. O sistema encerra as sessões existentes, gera uma nova senha temporária e exige outra troca no próximo acesso.
 
 O CSV exportado preserva todas as colunas de entrada e cria ou atualiza:
 
@@ -51,6 +54,8 @@ Um lote duplo só recebe status `concluido` quando todas as avaliações foram r
 - Conteúdos importados são inseridos na interface com `textContent`.
 - Campos perigosos para planilhas recebem sanitização contra CSV Injection na exportação.
 - A sessão é mantida por cookie HTTP-only e as senhas são derivadas com `scrypt` e salt individual.
+- Senhas temporárias são geradas no servidor, exibidas uma única vez e substituídas obrigatoriamente no primeiro acesso.
+- A redefinição administrativa de senha encerra todas as sessões ativas do avaliador.
 - `localStorage` guarda somente a preferência de tema.
 - O PapaParse é servido localmente pelo Express, portanto a importação não depende do CDN.
 
@@ -60,4 +65,4 @@ Um lote duplo só recebe status `concluido` quando todas as avaliações foram r
 npm test
 ```
 
-O teste integrado usa um banco temporário e cobre login e permissões, avaliação dupla, cálculo de concordância, reconciliação, transição de status e exportação CSV.
+O teste integrado usa um banco temporário e cobre senha temporária, troca obrigatória, redefinição administrativa, invalidação de sessão, login e permissões, avaliação dupla, cálculo de concordância, reconciliação, transição de status e exportação CSV.

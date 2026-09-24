@@ -37,13 +37,13 @@ export function authenticate(request) {
   const token = readCookies(request)[sessionCookie];
   if (!token) return null;
   const user = db.prepare(`
-    SELECT a.id, a.nome, a.email, a.username, a.papel, a.ativo, s.id AS sessao_id
+    SELECT a.id, a.nome, a.email, a.username, a.papel, a.ativo, a.senha_temporaria, s.id AS sessao_id
     FROM sessoes s JOIN avaliadores a ON a.id = s.avaliador_id
     WHERE s.token_hash = ? AND s.expira_em > ? AND a.ativo = 1
   `).get(hashToken(token), new Date().toISOString());
   if (!user) return null;
   db.prepare('UPDATE sessoes SET ultimo_acesso_em = CURRENT_TIMESTAMP WHERE id = ?').run(user.sessao_id);
-  return { id: user.id, nome: user.nome, email: user.email, username: user.username, papel: user.papel };
+  return { id: user.id, nome: user.nome, email: user.email, username: user.username, papel: user.papel, senhaTemporaria: Boolean(user.senha_temporaria), sessaoId: user.sessao_id };
 }
 
 export function requireAuth(request, response, next) {
@@ -60,5 +60,6 @@ export function requireAdmin(request, response, next) {
 
 export function requireEvaluator(request, response, next) {
   if (request.user?.papel !== 'avaliador') return next(new HttpError(403, 'Acesso exclusivo de avaliadores.'));
+  if (request.user.senhaTemporaria) return next(new HttpError(403, 'Crie sua senha definitiva antes de iniciar as avaliações.'));
   next();
 }

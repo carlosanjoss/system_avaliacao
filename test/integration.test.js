@@ -41,10 +41,17 @@ test('login, CSV, avaliação dupla, reconciliação e exportação', async () =
   try {
     const adminSession = await login('admin', 'Admin@Teste2026');
     assert.equal(adminSession.user.papel, 'admin');
-    const first = await json('/avaliadores', { method: 'POST', body: JSON.stringify({ nome: 'Ana Lima', email: 'ana@example.org', username: 'ana.lima', password: 'Ana@Teste2026' }) }, adminSession.cookie);
-    const second = await json('/avaliadores', { method: 'POST', body: JSON.stringify({ nome: 'Bruno Luz', email: 'bruno@example.org', username: 'bruno.luz', password: 'Bruno@Teste2026' }) }, adminSession.cookie);
-    const firstSession = await login('ana.lima', 'Ana@Teste2026');
-    const secondSession = await login('bruno.luz', 'Bruno@Teste2026');
+    const first = await json('/avaliadores', { method: 'POST', body: JSON.stringify({ nome: 'Ana Lima', email: 'ana@example.org', username: 'ana.lima' }) }, adminSession.cookie);
+    const second = await json('/avaliadores', { method: 'POST', body: JSON.stringify({ nome: 'Bruno Luz', email: 'bruno@example.org', username: 'bruno.luz' }) }, adminSession.cookie);
+    assert.ok(first.senhaTemporaria && second.senhaTemporaria);
+    const firstSession = await login('ana.lima', first.senhaTemporaria);
+    const secondSession = await login('bruno.luz', second.senhaTemporaria);
+    assert.equal(firstSession.user.senhaTemporaria, true);
+    assert.equal(secondSession.user.senhaTemporaria, true);
+    const firstChanged = await json('/auth/alterar-senha', { method: 'POST', body: JSON.stringify({ novaSenha: 'Ana@Definitiva2026' }) }, firstSession.cookie);
+    const secondChanged = await json('/auth/alterar-senha', { method: 'POST', body: JSON.stringify({ novaSenha: 'Bruno@Definitiva2026' }) }, secondSession.cookie);
+    assert.equal(firstChanged.user.senhaTemporaria, false);
+    assert.equal(secondChanged.user.senhaTemporaria, false);
     const forbidden = await call('/avaliadores', {}, firstSession.cookie);
     assert.equal(forbidden.response.status, 403);
 
@@ -98,6 +105,15 @@ test('login, CSV, avaliação dupla, reconciliação e exportação', async () =
     const lots = await json('/lotes', {}, adminSession.cookie);
     assert.equal(lots[0].status, 'concluido');
     assert.equal(lots[0].avaliacoes_feitas, 4);
+
+    const reset = await json(`/avaliadores/${first.id}/resetar-senha`, { method: 'POST' }, adminSession.cookie);
+    assert.ok(reset.senhaTemporaria);
+    const invalidated = await call('/lotes', {}, firstSession.cookie);
+    assert.equal(invalidated.response.status, 401);
+    const resetSession = await login('ana.lima', reset.senhaTemporaria);
+    assert.equal(resetSession.user.senhaTemporaria, true);
+    const changedAgain = await json('/auth/alterar-senha', { method: 'POST', body: JSON.stringify({ novaSenha: 'Ana@NovaSenha2027' }) }, resetSession.cookie);
+    assert.equal(changedAgain.user.senhaTemporaria, false);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     db.close();

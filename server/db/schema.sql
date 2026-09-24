@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS avaliadores (
   username TEXT COLLATE NOCASE,
   senha_hash TEXT,
   senha_salt TEXT,
+  senha_temporaria INTEGER NOT NULL DEFAULT 0 CHECK (senha_temporaria IN (0, 1)),
   papel TEXT NOT NULL DEFAULT 'avaliador' CHECK (papel IN ('admin', 'avaliador')),
   ativo INTEGER NOT NULL DEFAULT 1 CHECK (ativo IN (0, 1)),
   criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

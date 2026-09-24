@@ -22,12 +22,14 @@ export const api = {
   auth: {
     login: (username, password) => request('/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
     me: () => request('/auth/me'),
+    changePassword: (novaSenha) => request('/auth/alterar-senha', { method: 'POST', body: JSON.stringify({ novaSenha }) }),
     logout: () => request('/auth/logout', { method: 'POST' })
   },
   avaliadores: {
     list: () => request('/avaliadores'),
     create: (data) => request('/avaliadores', { method: 'POST', body: JSON.stringify(data) }),
     update: (id, data) => request(`/avaliadores/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    resetPassword: (id) => request(`/avaliadores/${id}/resetar-senha`, { method: 'POST' }),
     remove: (id) => request(`/avaliadores/${id}`, { method: 'DELETE' })
   },
   lotes: {

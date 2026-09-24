@@ -2,12 +2,12 @@ import { Router } from 'express';
 import { db } from '../db/db.js';
 import { authenticate, clearSessionHeader, createSession, hashToken, readCookies, sessionCookie, sessionHeader } from '../lib/auth.js';
 import { HttpError, nonEmptyText } from '../lib/http.js';
-import { verifyPassword } from '../lib/password.js';
+import { createPasswordHash, validatePassword, verifyPassword } from '../lib/password.js';
 
 export const authRouter = Router();
 
 function publicUser(user) {
-  return { id: user.id, nome: user.nome, email: user.email, username: user.username, papel: user.papel };
+  return { id: user.id, nome: user.nome, email: user.email, username: user.username, papel: user.papel, senhaTemporaria: Boolean(user.senha_temporaria ?? user.senhaTemporaria) };
 }
 
 authRouter.post('/login', (request, response) => {
@@ -24,10 +24,31 @@ authRouter.post('/login', (request, response) => {
   response.json({ user: publicUser(user) });
 });
 
+authRouter.post('/alterar-senha', (request, response) => {
+  const user = authenticate(request);
+  if (!user) throw new HttpError(401, 'Sessão não autenticada.');
+  const newPassword = String(request.body.novaSenha || '');
+  const passwordError = validatePassword(newPassword);
+  if (passwordError) throw new HttpError(400, passwordError);
+  const current = db.prepare('SELECT senha_hash, senha_salt FROM avaliadores WHERE id = ?').get(user.id);
+  if (current?.senha_hash && verifyPassword(newPassword, current.senha_salt, current.senha_hash)) throw new HttpError(400, 'A nova senha deve ser diferente da senha temporária.');
+  const credentials = createPasswordHash(newPassword);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare('UPDATE avaliadores SET senha_hash = ?, senha_salt = ?, senha_temporaria = 0 WHERE id = ?').run(credentials.hash, credentials.salt, user.id);
+    db.prepare('DELETE FROM sessoes WHERE avaliador_id = ? AND id <> ?').run(user.id, user.sessaoId);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  response.json({ user: publicUser({ ...user, senhaTemporaria: false }) });
+});
+
 authRouter.get('/me', (request, response) => {
   const user = authenticate(request);
   if (!user) throw new HttpError(401, 'Sessão não autenticada.');
-  response.json({ user });
+  response.json({ user: publicUser(user) });
 });
 
 authRouter.post('/logout', (request, response) => {
