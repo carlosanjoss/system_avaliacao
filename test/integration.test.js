@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-test('login, CSV, avaliação dupla, reconciliação e exportação', async () => {
+test('login, CSV, avaliação dupla, conjunta, reconciliação e exportação', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'radar-avaliacao-'));
   process.env.NODE_ENV = 'test';
   process.env.DB_PATH = join(directory, 'teste.sqlite');
@@ -43,15 +43,19 @@ test('login, CSV, avaliação dupla, reconciliação e exportação', async () =
     assert.equal(adminSession.user.papel, 'admin');
     const first = await json('/avaliadores', { method: 'POST', body: JSON.stringify({ nome: 'Ana Lima', email: 'ana@example.org', username: 'ana.lima' }) }, adminSession.cookie);
     const second = await json('/avaliadores', { method: 'POST', body: JSON.stringify({ nome: 'Bruno Luz', email: 'bruno@example.org', username: 'bruno.luz' }) }, adminSession.cookie);
-    assert.ok(first.senhaTemporaria && second.senhaTemporaria);
+    const third = await json('/avaliadores', { method: 'POST', body: JSON.stringify({ nome: 'Carla Sol', email: 'carla@example.org', username: 'carla.sol' }) }, adminSession.cookie);
+    assert.ok(first.senhaTemporaria && second.senhaTemporaria && third.senhaTemporaria);
     const firstSession = await login('ana.lima', first.senhaTemporaria);
     const secondSession = await login('bruno.luz', second.senhaTemporaria);
+    const thirdSession = await login('carla.sol', third.senhaTemporaria);
     assert.equal(firstSession.user.senhaTemporaria, true);
     assert.equal(secondSession.user.senhaTemporaria, true);
     const firstChanged = await json('/auth/alterar-senha', { method: 'POST', body: JSON.stringify({ novaSenha: 'Ana@Definitiva2026' }) }, firstSession.cookie);
     const secondChanged = await json('/auth/alterar-senha', { method: 'POST', body: JSON.stringify({ novaSenha: 'Bruno@Definitiva2026' }) }, secondSession.cookie);
+    const thirdChanged = await json('/auth/alterar-senha', { method: 'POST', body: JSON.stringify({ novaSenha: 'Carla@Definitiva2026' }) }, thirdSession.cookie);
     assert.equal(firstChanged.user.senhaTemporaria, false);
     assert.equal(secondChanged.user.senhaTemporaria, false);
+    assert.equal(thirdChanged.user.senhaTemporaria, false);
     const forbidden = await call('/avaliadores', {}, firstSession.cookie);
     assert.equal(forbidden.response.status, 403);
 
@@ -105,6 +109,47 @@ test('login, CSV, avaliação dupla, reconciliação e exportação', async () =
     const lots = await json('/lotes', {}, adminSession.cookie);
     assert.equal(lots[0].status, 'concluido');
     assert.equal(lots[0].avaliacoes_feitas, 4);
+
+    const joint = await json('/lotes', {
+      method: 'POST',
+      body: JSON.stringify({
+        nomeArquivo: 'amostra-grande.csv',
+        colunaConteudo: 'texto',
+        tipoAvaliacao: 'conjunto',
+        avaliadoresAtribuidos: [first.id, second.id, third.id],
+        linhas: Array.from({ length: 8 }, (_, index) => ({
+          linhaIndex: index + 1,
+          conteudo: `Conteúdo distribuído ${index + 1}`,
+          dadosOriginais: { id: String(index + 1), texto: `Conteúdo distribuído ${index + 1}` }
+        }))
+      })
+    }, adminSession.cookie);
+    assert.equal(joint.distribuicao_conjunta, 1);
+    assert.equal(joint.modo_avaliacao, 'conjunto');
+    const jointQueues = await Promise.all([
+      json(`/lotes/${joint.id}/pendentes/${first.id}`, {}, firstSession.cookie),
+      json(`/lotes/${joint.id}/pendentes/${second.id}`, {}, secondSession.cookie),
+      json(`/lotes/${joint.id}/pendentes/${third.id}`, {}, thirdSession.cookie)
+    ]);
+    assert.deepEqual(jointQueues.map((queue) => queue.total), [3, 3, 2]);
+    assert.equal(new Set(jointQueues.flatMap((queue) => queue.items.map((item) => item.id))).size, 8);
+    const wrongEvaluator = await call('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: jointQueues[1].items[0].id, classificacao: 'nao_hate', categorias: [] }) }, firstSession.cookie);
+    assert.equal(wrongEvaluator.response.status, 403);
+    for (const [index, queue] of jointQueues.entries()) {
+      const session = [firstSession, secondSession, thirdSession][index];
+      for (const item of queue.items) {
+        await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: item.id, classificacao: 'nao_hate', categorias: [] }) }, session.cookie);
+      }
+    }
+    const jointStatus = (await json('/lotes', {}, adminSession.cookie)).find((item) => item.id === joint.id);
+    assert.equal(jointStatus.status, 'concluido');
+    assert.equal(jointStatus.avaliacoes_feitas, 8);
+    assert.equal(jointStatus.progresso, 1);
+    const jointExportResponse = await fetch(`${base}/lotes/${joint.id}/export.csv`, { headers: { Cookie: adminSession.cookie } });
+    assert.ok(jointExportResponse.ok);
+    const jointCsv = await jointExportResponse.text();
+    assert.match(jointCsv, /nao_hate/);
+    assert.match(jointCsv, new RegExp(String(third.id)));
 
     const reset = await json(`/avaliadores/${first.id}/resetar-senha`, { method: 'POST' }, adminSession.cookie);
     assert.ok(reset.senhaTemporaria);

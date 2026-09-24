@@ -26,6 +26,29 @@ export function createDatabase(filename = process.env.DB_PATH || join(dataDir, '
   additions.forEach(([name, definition]) => {
     if (!columns.has(name)) db.exec(`ALTER TABLE avaliadores ADD COLUMN ${name} ${definition}`);
   });
+  const loteColumns = new Set(db.prepare('PRAGMA table_info(lotes)').all().map((column) => column.name));
+  if (!loteColumns.has('distribuicao_conjunta')) {
+    db.exec('ALTER TABLE lotes ADD COLUMN distribuicao_conjunta INTEGER NOT NULL DEFAULT 0 CHECK (distribuicao_conjunta IN (0, 1))');
+  }
+  const assignmentSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lote_avaliadores'").get()?.sql || '';
+  if (/ordem\s+IN\s*\(1,\s*2\)/i.test(assignmentSchema)) {
+    db.exec(`
+      BEGIN IMMEDIATE;
+      CREATE TABLE lote_avaliadores_nova (
+        lote_id INTEGER NOT NULL REFERENCES lotes(id) ON DELETE CASCADE,
+        avaliador_id INTEGER NOT NULL REFERENCES avaliadores(id) ON DELETE RESTRICT,
+        ordem INTEGER NOT NULL CHECK (ordem >= 1),
+        PRIMARY KEY (lote_id, avaliador_id),
+        UNIQUE (lote_id, ordem)
+      );
+      INSERT INTO lote_avaliadores_nova (lote_id, avaliador_id, ordem)
+      SELECT lote_id, avaliador_id, ordem FROM lote_avaliadores;
+      DROP TABLE lote_avaliadores;
+      ALTER TABLE lote_avaliadores_nova RENAME TO lote_avaliadores;
+      CREATE INDEX idx_lote_avaliadores_avaliador ON lote_avaliadores(avaliador_id, lote_id);
+      COMMIT;
+    `);
+  }
   db.exec('CREATE UNIQUE INDEX IF NOT EXISTS uq_avaliadores_username ON avaliadores(username COLLATE NOCASE) WHERE username IS NOT NULL;');
   db.prepare("UPDATE categorias_odio SET nome = 'Classismo' WHERE nome = 'Aporofobia'").run();
   db.prepare("UPDATE categorias_odio SET nome = 'Gordofobia' WHERE nome = 'Body Shaming'").run();

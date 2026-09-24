@@ -3,6 +3,15 @@ import { clear, confirmAction, el, emptyState, errorMessage, formatDate, modal, 
 
 let cache = { avaliadores: [], lotes: [] };
 
+function evaluationModeLabel(lote) {
+  if (lote.distribuicao_conjunta) return 'Em conjunto';
+  return lote.tipo_avaliacao === 'dupla' ? 'Dupla' : 'Individual';
+}
+
+function requiredReviews(lote) {
+  return Number(lote.total_itens) * (lote.tipo_avaliacao === 'dupla' ? 2 : 1);
+}
+
 function actionButton(label, handler, danger = false) {
   const button = el('button', danger ? 'button-danger !px-3 !py-2' : 'button-secondary !px-3 !py-2', label);
   button.type = 'button';
@@ -195,6 +204,24 @@ function selectField(label, options) {
   return { wrap, select };
 }
 
+function evaluatorCheckboxField(label, evaluators, selectedIds = []) {
+  const wrap = el('fieldset', 'md:col-span-2');
+  wrap.append(el('legend', 'field-label', label));
+  const grid = el('div', 'grid max-h-56 gap-2 overflow-y-auto rounded-2xl border border-slate-200 p-3 dark:border-white/[.09] sm:grid-cols-2');
+  const selected = new Set(selectedIds.map(Number));
+  evaluators.forEach((evaluator) => {
+    const option = el('label', 'flex cursor-pointer items-center gap-3 rounded-xl border border-transparent p-3 text-sm transition hover:border-teal-400/30 hover:bg-teal-400/[.04]');
+    const input = el('input', 'h-4 w-4 accent-teal-500');
+    input.type = 'checkbox';
+    input.value = evaluator.id;
+    input.checked = selected.has(Number(evaluator.id));
+    option.append(input, el('span', 'font-bold', evaluator.nome), el('span', 'ml-auto text-[11px] text-slate-500', `@${evaluator.username}`));
+    grid.append(option);
+  });
+  wrap.append(grid, el('p', 'mt-2 text-[11px] leading-5 text-slate-500', 'Os itens serão distribuídos em rodízio, com diferença máxima de um item entre avaliadores.'));
+  return { wrap, values: () => [...grid.querySelectorAll('input:checked')].map((input) => Number(input.value)) };
+}
+
 function analyzeRows(rows, column) {
   const empty = [];
   const duplicates = [];
@@ -219,14 +246,16 @@ function batchConfigModal(parsed) {
     const grid = el('div', 'grid gap-4 md:grid-cols-2');
     const options = parsed.fields.map((field) => ({ value: field, label: field }));
     const contentField = selectField('Coluna do CSV que será analisada', options);
-    const typeField = selectField('Tipo de avaliação', [{ value: 'individual', label: 'Individual' }, { value: 'dupla', label: 'Dupla' }]);
+    const typeField = selectField('Tipo de avaliação', [{ value: 'individual', label: 'Individual' }, { value: 'dupla', label: 'Dupla (todos avaliam todos os itens)' }, { value: 'conjunto', label: 'Em conjunto (itens divididos igualmente)' }]);
     const eligible = cache.avaliadores.filter((item) => item.ativo && item.username && item.tem_senha);
     const firstField = selectField('Avaliador 1', [{ value: '', label: 'Selecione' }, ...eligible.map((item) => ({ value: item.id, label: `${item.nome} (@${item.username})` }))]);
     const secondField = selectField('Avaliador 2', [{ value: '', label: 'Selecione' }, ...eligible.map((item) => ({ value: item.id, label: `${item.nome} (@${item.username})` }))]);
+    const jointField = evaluatorCheckboxField('Avaliadores do conjunto', eligible);
     secondField.wrap.classList.add('hidden');
+    jointField.wrap.classList.add('hidden');
     const outputInfo = el('div', 'rounded-2xl border border-teal-400/20 bg-teal-400/[.05] p-4 md:col-span-2');
     outputInfo.append(el('p', 'text-xs font-extrabold text-teal-500', 'Colunas criadas/preenchidas na exportação'), el('p', 'mt-2 font-mono text-xs text-slate-500', 'hate/no_hate · tipos_hate'));
-    grid.append(contentField.wrap, typeField.wrap, firstField.wrap, secondField.wrap, outputInfo);
+    grid.append(contentField.wrap, typeField.wrap, firstField.wrap, secondField.wrap, jointField.wrap, outputInfo);
 
     const validation = el('div', 'rounded-2xl border border-slate-200 bg-slate-500/[.03] p-4 text-xs dark:border-white/10');
     const validationTitle = el('p', 'font-extrabold', 'Validação do arquivo');
@@ -263,7 +292,14 @@ function batchConfigModal(parsed) {
       return report;
     };
     contentField.select.addEventListener('change', updateValidation);
-    typeField.select.addEventListener('change', () => secondField.wrap.classList.toggle('hidden', typeField.select.value !== 'dupla'));
+    const updateAssignmentFields = () => {
+      const joint = typeField.select.value === 'conjunto';
+      firstField.wrap.classList.toggle('hidden', joint);
+      secondField.wrap.classList.toggle('hidden', typeField.select.value !== 'dupla');
+      jointField.wrap.classList.toggle('hidden', !joint);
+    };
+    typeField.select.addEventListener('change', updateAssignmentFields);
+    updateAssignmentFields();
     updateValidation();
 
     const actions = el('div', 'flex flex-col-reverse justify-end gap-3 sm:flex-row');
@@ -278,8 +314,9 @@ function batchConfigModal(parsed) {
       event.preventDefault();
       const report = updateValidation();
       if (report.empty.length || report.duplicates.length) return toast('Remova conteúdos vazios e duplicados antes de importar.', 'error');
-      const evaluatorIds = [Number(firstField.select.value)];
+      const evaluatorIds = typeField.select.value === 'conjunto' ? jointField.values() : [Number(firstField.select.value)];
       if (typeField.select.value === 'dupla') evaluatorIds.push(Number(secondField.select.value));
+      if (typeField.select.value === 'conjunto' && evaluatorIds.length < 2) return toast('Selecione ao menos dois avaliadores para o modo conjunto.', 'error');
       if (evaluatorIds.some((id) => !id) || new Set(evaluatorIds).size !== evaluatorIds.length) return toast('Selecione avaliadores distintos para o lote.', 'error');
       save.disabled = true;
       save.textContent = 'Importando…';
@@ -309,15 +346,23 @@ function assignmentModal(lote, onSaved) {
   const dialog = modal({ title: 'Editar atribuição', subtitle: lote.nome_arquivo });
   const form = el('form', 'space-y-4');
   const currentIds = String(lote.avaliadores_ids || '').split(',').filter(Boolean).map(Number);
-  const typeField = selectField('Tipo de avaliação', [{ value: 'individual', label: 'Individual' }, { value: 'dupla', label: 'Dupla' }]);
-  typeField.select.value = lote.tipo_avaliacao;
-  const choices = [{ value: '', label: 'Selecione' }, ...cache.avaliadores.filter((item) => item.ativo && item.username && item.tem_senha).map((item) => ({ value: item.id, label: `${item.nome} (@${item.username})` }))];
+  const typeField = selectField('Tipo de avaliação', [{ value: 'individual', label: 'Individual' }, { value: 'dupla', label: 'Dupla (todos avaliam todos os itens)' }, { value: 'conjunto', label: 'Em conjunto (itens divididos igualmente)' }]);
+  typeField.select.value = lote.modo_avaliacao || lote.tipo_avaliacao;
+  const eligible = cache.avaliadores.filter((item) => item.ativo && item.username && item.tem_senha);
+  const choices = [{ value: '', label: 'Selecione' }, ...eligible.map((item) => ({ value: item.id, label: `${item.nome} (@${item.username})` }))];
   const first = selectField('Avaliador 1', choices);
   const second = selectField('Avaliador 2', choices);
+  const joint = evaluatorCheckboxField('Avaliadores do conjunto', eligible, currentIds);
   first.select.value = currentIds[0] || '';
   second.select.value = currentIds[1] || '';
-  second.wrap.classList.toggle('hidden', lote.tipo_avaliacao !== 'dupla');
-  typeField.select.addEventListener('change', () => second.wrap.classList.toggle('hidden', typeField.select.value !== 'dupla'));
+  const updateFields = () => {
+    const isJoint = typeField.select.value === 'conjunto';
+    first.wrap.classList.toggle('hidden', isJoint);
+    second.wrap.classList.toggle('hidden', typeField.select.value !== 'dupla');
+    joint.wrap.classList.toggle('hidden', !isJoint);
+  };
+  typeField.select.addEventListener('change', updateFields);
+  updateFields();
   const actions = el('div', 'flex justify-end gap-3 pt-3');
   const cancel = el('button', 'button-secondary', 'Cancelar');
   cancel.type = 'button';
@@ -325,11 +370,12 @@ function assignmentModal(lote, onSaved) {
   const save = el('button', 'button-primary', 'Salvar atribuição');
   save.type = 'submit';
   actions.append(cancel, save);
-  form.append(typeField.wrap, first.wrap, second.wrap, actions);
+  form.append(typeField.wrap, first.wrap, second.wrap, joint.wrap, actions);
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const ids = [Number(first.select.value)];
+    const ids = typeField.select.value === 'conjunto' ? joint.values() : [Number(first.select.value)];
     if (typeField.select.value === 'dupla') ids.push(Number(second.select.value));
+    if (typeField.select.value === 'conjunto' && ids.length < 2) return toast('Selecione ao menos dois avaliadores para o modo conjunto.', 'error');
     if (ids.some((id) => !id) || new Set(ids).size !== ids.length) return toast('Selecione perfis distintos.', 'error');
     try {
       await api.lotes.update(lote.id, { tipoAvaliacao: typeField.select.value, avaliadoresAtribuidos: ids });
@@ -393,13 +439,13 @@ function batchesPanel(onChanged) {
     name.append(el('p', 'max-w-[250px] truncate font-bold', lote.nome_arquivo), el('p', 'mt-1 text-[11px] text-slate-500', `${lote.total_itens} itens · ${formatDate(lote.data_upload)}`));
     const progress = el('td', 'min-w-[165px]');
     const numbers = el('div', 'mb-2 flex justify-between text-[11px]');
-    numbers.append(el('span', 'font-bold', `${lote.avaliacoes_feitas}/${lote.total_itens * lote.total_avaliadores}`), el('span', 'text-slate-500', percent(lote.progresso)));
+    numbers.append(el('span', 'font-bold', `${lote.avaliacoes_feitas}/${requiredReviews(lote)}`), el('span', 'text-slate-500', percent(lote.progresso)));
     const track = el('div', 'progress-track');
     const bar = el('div', 'progress-bar');
     bar.style.width = percent(lote.progresso);
     track.append(bar);
     progress.append(numbers, track);
-    row.append(name, el('td', '', lote.tipo_avaliacao === 'dupla' ? 'Dupla' : 'Individual'), el('td', 'max-w-[220px] text-slate-500', lote.avaliadores_nomes || '—'), progress);
+    row.append(name, el('td', '', evaluationModeLabel(lote)), el('td', 'max-w-[220px] text-slate-500', lote.avaliadores_nomes || '—'), progress);
     const status = el('td');
     status.append(statusPill(lote.status));
     row.append(status);

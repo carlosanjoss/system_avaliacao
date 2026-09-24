@@ -30,7 +30,10 @@ O PapaParse é servido localmente. Tailwind CSS e Google Fonts continuam por CDN
 2. Cadastre cada avaliador com nome, e-mail e usuário. O servidor gera uma senha temporária, exibida ao administrador apenas uma vez.
 3. No primeiro login, o avaliador informa a senha temporária e precisa criar uma senha pessoal antes de acessar os lotes.
 4. Importe um ou mais CSVs e indique explicitamente qual coluna textual será analisada.
-5. Escolha o modo individual ou dupla e os avaliadores responsáveis.
+5. Escolha o modo de avaliação e os avaliadores responsáveis:
+   - **Individual:** um avaliador recebe todos os itens do lote;
+   - **Dupla:** dois avaliadores recebem todos os itens, permitindo concordância e reconciliação;
+   - **Em conjunto:** dois ou mais avaliadores dividem os itens do lote de maneira equilibrada e cada item é avaliado uma única vez.
 6. Cada avaliador realiza apenas os lotes atribuídos à própria conta.
 7. Em lotes duplos, abra Reconciliação para resolver divergências e consultar Kappa de Cohen.
 8. Baixe o CSV consolidado em Resultados.
@@ -46,6 +49,8 @@ O CSV exportado preserva todas as colunas de entrada e cria ou atualiza:
 Somente o administrador pode importar, atribuir, reconciliar e baixar CSVs. Avaliadores podem apenas acessar seus lotes, classificar e revisar as próprias respostas.
 
 Um lote duplo só recebe status `concluido` quando todas as avaliações foram registradas e todas as divergências de classificação foram reconciliadas.
+
+No modo em conjunto, a distribuição usa rodízio pela ordem das linhas do CSV. A diferença entre as filas dos avaliadores é de no máximo um item. A atribuição pode ser alterada e recalculada enquanto nenhuma avaliação tiver sido registrada; depois do início, ela fica bloqueada para preservar a rastreabilidade.
 
 ## Persistência e segurança
 
@@ -65,4 +70,4 @@ Um lote duplo só recebe status `concluido` quando todas as avaliações foram r
 npm test
 ```
 
-O teste integrado usa um banco temporário e cobre senha temporária, troca obrigatória, redefinição administrativa, invalidação de sessão, login e permissões, avaliação dupla, cálculo de concordância, reconciliação, transição de status e exportação CSV.
+O teste integrado usa um banco temporário e cobre senha temporária, troca obrigatória, redefinição administrativa, invalidação de sessão, login e permissões, avaliação dupla, distribuição conjunta equilibrada, isolamento das filas, cálculo de concordância, reconciliação, transição de status e exportação CSV.

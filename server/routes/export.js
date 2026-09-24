@@ -26,6 +26,10 @@ exportRouter.get('/:id/export.csv', requireAdmin, (req, res) => {
     JOIN lote_itens li ON li.id = av.item_id WHERE li.lote_id = ? GROUP BY av.id
   `).all(loteId);
   const reconciliations = new Map(db.prepare('SELECT * FROM reconciliacoes WHERE item_id IN (SELECT id FROM lote_itens WHERE lote_id = ?)').all(loteId).map((row) => [row.item_id, row]));
+  const jointAssignments = new Map(lote.distribuicao_conjunta ? db.prepare(`
+    SELECT lia.item_id, lia.avaliador_id FROM lote_item_avaliadores lia
+    JOIN lote_itens li ON li.id = lia.item_id WHERE li.lote_id = ?
+  `).all(loteId).map((row) => [row.item_id, row.avaliador_id]) : []);
   const reviewMap = new Map(reviews.map((review) => [`${review.item_id}:${review.avaliador_id}`, review]));
   const pairs = items.map((item) => ({
     a1: reviewMap.get(`${item.id}:${evaluators[0]?.avaliador_id}`)?.classificacao,
@@ -37,16 +41,18 @@ exportRouter.get('/:id/export.csv', requireAdmin, (req, res) => {
   const extras = ['avaliador_1_id', 'avaliador_1_classificacao', 'avaliador_1_categorias', 'avaliador_2_id', 'avaliador_2_classificacao', 'avaliador_2_categorias', 'concordancia', 'decisao_final', 'categorias_finais', 'kappa_lote'];
   const output = [[...originalHeaders, ...extras].map(csvCell).join(',')];
   items.forEach((item, index) => {
-    const first = reviewMap.get(`${item.id}:${evaluators[0]?.avaliador_id}`);
-    const second = reviewMap.get(`${item.id}:${evaluators[1]?.avaliador_id}`);
+    const firstEvaluatorId = lote.distribuicao_conjunta ? jointAssignments.get(item.id) : evaluators[0]?.avaliador_id;
+    const secondEvaluatorId = lote.distribuicao_conjunta ? null : evaluators[1]?.avaliador_id;
+    const first = reviewMap.get(`${item.id}:${firstEvaluatorId}`);
+    const second = secondEvaluatorId ? reviewMap.get(`${item.id}:${secondEvaluatorId}`) : null;
     const reconciliation = reconciliations.get(item.id);
     const agree = first && second ? (first.classificacao === second.classificacao ? 'sim' : 'nao') : '';
     const final = lote.tipo_avaliacao === 'individual' ? first?.classificacao || '' : reconciliation?.decisao_final || (agree === 'sim' ? first.classificacao : '');
     const finalCategories = lote.tipo_avaliacao === 'individual' ? first?.categorias || '' : reconciliation ? JSON.parse(reconciliation.categorias_finais).map((id) => db.prepare('SELECT nome FROM categorias_odio WHERE id = ?').get(id)?.nome).filter(Boolean).join(' | ') : (agree === 'sim' ? first?.categorias || '' : '');
     const values = [
       ...originalHeaders.map((header) => header === 'hate/no_hate' ? final : header === 'tipos_hate' ? finalCategories : originals[index][header] ?? ''),
-      evaluators[0]?.avaliador_id || '', first?.classificacao || '', first?.categorias || '',
-      evaluators[1]?.avaliador_id || '', second?.classificacao || '', second?.categorias || '',
+      firstEvaluatorId || '', first?.classificacao || '', first?.categorias || '',
+      secondEvaluatorId || '', second?.classificacao || '', second?.categorias || '',
       agree, final, finalCategories, kappa == null ? '' : kappa.toFixed(4)
     ];
     output.push(values.map(csvCell).join(','));

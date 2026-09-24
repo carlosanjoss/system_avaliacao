@@ -15,7 +15,8 @@ export async function renderExport() {
       lotes.forEach((lote) => {
         const row = el('div', 'flex flex-col gap-4 p-5 sm:flex-row sm:items-center');
         const info = el('div', 'min-w-0 flex-1');
-        info.append(el('p', 'truncate text-sm font-extrabold', lote.nome_arquivo), el('p', 'mt-1 text-xs text-slate-500', `${lote.avaliacoes_feitas} avaliações · ${lote.tipo_avaliacao === 'dupla' ? 'modo dupla' : 'modo individual'}`));
+        const mode = lote.distribuicao_conjunta ? 'modo conjunto' : lote.tipo_avaliacao === 'dupla' ? 'modo dupla' : 'modo individual';
+        info.append(el('p', 'truncate text-sm font-extrabold', lote.nome_arquivo), el('p', 'mt-1 text-xs text-slate-500', `${lote.avaliacoes_feitas} avaliações · ${mode}`));
         const download = el('a', 'button-primary', '↓ Baixar CSV');
         download.href = api.lotes.exportUrl(lote.id);
         info.dataset.lote = lote.id;

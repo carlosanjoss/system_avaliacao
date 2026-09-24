@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS lotes (
   coluna_conteudo TEXT NOT NULL,
   coluna_resultado TEXT NOT NULL,
   tipo_avaliacao TEXT NOT NULL CHECK (tipo_avaliacao IN ('individual', 'dupla')),
+  distribuicao_conjunta INTEGER NOT NULL DEFAULT 0 CHECK (distribuicao_conjunta IN (0, 1)),
   status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'em_andamento', 'concluido'))
 );
 
@@ -70,12 +71,19 @@ CREATE INDEX IF NOT EXISTS idx_lote_itens_lote ON lote_itens(lote_id, linha_inde
 CREATE TABLE IF NOT EXISTS lote_avaliadores (
   lote_id INTEGER NOT NULL REFERENCES lotes(id) ON DELETE CASCADE,
   avaliador_id INTEGER NOT NULL REFERENCES avaliadores(id) ON DELETE RESTRICT,
-  ordem INTEGER NOT NULL CHECK (ordem IN (1, 2)),
+  ordem INTEGER NOT NULL CHECK (ordem >= 1),
   PRIMARY KEY (lote_id, avaliador_id),
   UNIQUE (lote_id, ordem)
 );
 
 CREATE INDEX IF NOT EXISTS idx_lote_avaliadores_avaliador ON lote_avaliadores(avaliador_id, lote_id);
+
+CREATE TABLE IF NOT EXISTS lote_item_avaliadores (
+  item_id INTEGER PRIMARY KEY REFERENCES lote_itens(id) ON DELETE CASCADE,
+  avaliador_id INTEGER NOT NULL REFERENCES avaliadores(id) ON DELETE RESTRICT
+);
+
+CREATE INDEX IF NOT EXISTS idx_lote_item_avaliadores_avaliador ON lote_item_avaliadores(avaliador_id, item_id);
 
 CREATE TABLE IF NOT EXISTS avaliacoes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

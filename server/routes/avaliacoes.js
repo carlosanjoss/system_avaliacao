@@ -19,10 +19,13 @@ avaliacoesRouter.post('/', requireEvaluator, (req, res) => {
   if (classificacao === 'hate' && !categorias.length) throw new HttpError(400, 'Selecione ao menos uma categoria para Hate.');
   if (classificacao === 'nao_hate' && categorias.length) throw new HttpError(400, 'Não Hate não deve possuir categorias de ódio.');
 
-  const item = db.prepare('SELECT lote_id FROM lote_itens WHERE id = ?').get(itemId);
+  const item = db.prepare('SELECT li.lote_id, l.distribuicao_conjunta FROM lote_itens li JOIN lotes l ON l.id = li.lote_id WHERE li.id = ?').get(itemId);
   if (!item) throw new HttpError(404, 'Item não encontrado.');
   if (!db.prepare('SELECT 1 FROM lote_avaliadores WHERE lote_id = ? AND avaliador_id = ?').get(item.lote_id, avaliadorId)) {
     throw new HttpError(403, 'Este item não está atribuído ao avaliador selecionado.');
+  }
+  if (item.distribuicao_conjunta && !db.prepare('SELECT 1 FROM lote_item_avaliadores WHERE item_id = ? AND avaliador_id = ?').get(itemId, avaliadorId)) {
+    throw new HttpError(403, 'Este item pertence à fila de outro avaliador.');
   }
   if (categorias.length) {
     const found = db.prepare(`SELECT COUNT(*) AS total FROM categorias_odio WHERE id IN (${categorias.map(() => '?').join(',')})`).get(...categorias).total;
