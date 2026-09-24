@@ -1,0 +1,19 @@
+{
+  "name": "radar-odio-avaliacao",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sistema local de anotação de discurso de ódio com Express e SQLite",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/server.js",
+    "dev": "node --env-file-if-exists=.env --watch server/server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "papaparse": "^5.4.1"
+  }
+}
