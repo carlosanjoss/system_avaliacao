@@ -1,11 +1,11 @@
 import { api } from './api.js';
 import { clear, confirmAction, el, emptyState, errorMessage, formatDate, modal, percent, skeleton, statusPill, toast } from './ui.js';
 
-let cache = { avaliadores: [], lotes: [] };
+let cache = { avaliadores: [], lotes: [], modelos: [] };
 
 function evaluationModeLabel(lote) {
   if (lote.distribuicao_conjunta) return 'Em conjunto';
-  return lote.tipo_avaliacao === 'dupla' ? 'Dupla' : 'Individual';
+  return lote.tipo_avaliacao === 'dupla' ? 'Dupla cega' : 'Individual';
 }
 
 function requiredReviews(lote) {
@@ -222,6 +222,22 @@ function evaluatorCheckboxField(label, evaluators, selectedIds = []) {
   return { wrap, values: () => [...grid.querySelectorAll('input:checked')].map((input) => Number(input.value)) };
 }
 
+function columnCheckboxField(columns) {
+  const wrap = el('fieldset', 'md:col-span-2');
+  wrap.append(el('legend', 'field-label', 'Colunas adicionais de contexto para o avaliador'));
+  const grid = el('div', 'grid max-h-44 gap-2 overflow-y-auto rounded-2xl border border-slate-200 p-3 dark:border-white/[.09] sm:grid-cols-2');
+  columns.forEach((column) => {
+    const option = el('label', 'flex cursor-pointer items-center gap-3 rounded-xl p-2 text-sm hover:bg-teal-400/[.04]');
+    const input = el('input', 'h-4 w-4 accent-teal-500');
+    input.type = 'checkbox';
+    input.value = column;
+    option.append(input, el('span', 'font-mono text-xs', column));
+    grid.append(option);
+  });
+  wrap.append(grid, el('p', 'mt-2 text-[11px] leading-5 text-slate-500', 'Esses valores aparecem acima das perguntas para dar contexto à decisão. A coluna principal já será exibida separadamente.'));
+  return { wrap, values: () => [...grid.querySelectorAll('input:checked')].map((input) => input.value) };
+}
+
 function analyzeRows(rows, column) {
   const empty = [];
   const duplicates = [];
@@ -246,7 +262,10 @@ function batchConfigModal(parsed) {
     const grid = el('div', 'grid gap-4 md:grid-cols-2');
     const options = parsed.fields.map((field) => ({ value: field, label: field }));
     const contentField = selectField('Coluna do CSV que será analisada', options);
-    const typeField = selectField('Tipo de avaliação', [{ value: 'individual', label: 'Individual' }, { value: 'dupla', label: 'Dupla (todos avaliam todos os itens)' }, { value: 'conjunto', label: 'Em conjunto (itens divididos igualmente)' }]);
+    const activeModels = cache.modelos.filter((model) => model.ativo);
+    const modelField = selectField('Modelo de avaliação', activeModels.map((model) => ({ value: model.id, label: `${model.nome} · v${model.versao}` })));
+    const contextField = columnCheckboxField(parsed.fields);
+    const typeField = selectField('Tipo de avaliação', [{ value: 'individual', label: 'Individual' }, { value: 'dupla', label: 'Dupla cega (dois avaliam sem ver a resposta do outro)' }, { value: 'conjunto', label: 'Em conjunto (itens divididos igualmente)' }]);
     const eligible = cache.avaliadores.filter((item) => item.ativo && item.username && item.tem_senha);
     const firstField = selectField('Avaliador 1', [{ value: '', label: 'Selecione' }, ...eligible.map((item) => ({ value: item.id, label: `${item.nome} (@${item.username})` }))]);
     const secondField = selectField('Avaliador 2', [{ value: '', label: 'Selecione' }, ...eligible.map((item) => ({ value: item.id, label: `${item.nome} (@${item.username})` }))]);
@@ -254,8 +273,15 @@ function batchConfigModal(parsed) {
     secondField.wrap.classList.add('hidden');
     jointField.wrap.classList.add('hidden');
     const outputInfo = el('div', 'rounded-2xl border border-teal-400/20 bg-teal-400/[.05] p-4 md:col-span-2');
-    outputInfo.append(el('p', 'text-xs font-extrabold text-teal-500', 'Colunas criadas/preenchidas na exportação'), el('p', 'mt-2 font-mono text-xs text-slate-500', 'hate/no_hate · tipos_hate'));
-    grid.append(contentField.wrap, typeField.wrap, firstField.wrap, secondField.wrap, jointField.wrap, outputInfo);
+    const outputColumns = el('p', 'mt-2 font-mono text-xs text-slate-500');
+    const updateOutputColumns = () => {
+      const model = activeModels.find((item) => item.id === Number(modelField.select.value));
+      outputColumns.textContent = model?.campos.map((field) => field.nomeColuna).join(' · ') || 'Selecione um modelo';
+    };
+    modelField.select.addEventListener('change', updateOutputColumns);
+    outputInfo.append(el('p', 'text-xs font-extrabold text-teal-500', 'Colunas criadas/preenchidas na exportação'), outputColumns);
+    grid.append(contentField.wrap, modelField.wrap, contextField.wrap, typeField.wrap, firstField.wrap, secondField.wrap, jointField.wrap, outputInfo);
+    updateOutputColumns();
 
     const validation = el('div', 'rounded-2xl border border-slate-200 bg-slate-500/[.03] p-4 text-xs dark:border-white/10');
     const validationTitle = el('p', 'font-extrabold', 'Validação do arquivo');
@@ -324,6 +350,8 @@ function batchConfigModal(parsed) {
         const payload = {
           nomeArquivo: parsed.file.name,
           colunaConteudo: contentField.select.value,
+          colunasContexto: contextField.values().filter((column) => column !== contentField.select.value),
+          modeloAvaliacaoId: Number(modelField.select.value),
           tipoAvaliacao: typeField.select.value,
           avaliadoresAtribuidos: evaluatorIds,
           linhas: parsed.rows.map((row, index) => ({ linhaIndex: index + 1, conteudo: row[contentField.select.value], dadosOriginais: row }))
@@ -346,7 +374,7 @@ function assignmentModal(lote, onSaved) {
   const dialog = modal({ title: 'Editar atribuição', subtitle: lote.nome_arquivo });
   const form = el('form', 'space-y-4');
   const currentIds = String(lote.avaliadores_ids || '').split(',').filter(Boolean).map(Number);
-  const typeField = selectField('Tipo de avaliação', [{ value: 'individual', label: 'Individual' }, { value: 'dupla', label: 'Dupla (todos avaliam todos os itens)' }, { value: 'conjunto', label: 'Em conjunto (itens divididos igualmente)' }]);
+  const typeField = selectField('Tipo de avaliação', [{ value: 'individual', label: 'Individual' }, { value: 'dupla', label: 'Dupla cega (dois avaliam sem ver a resposta do outro)' }, { value: 'conjunto', label: 'Em conjunto (itens divididos igualmente)' }]);
   typeField.select.value = lote.modo_avaliacao || lote.tipo_avaliacao;
   const eligible = cache.avaliadores.filter((item) => item.ativo && item.username && item.tem_senha);
   const choices = [{ value: '', label: 'Selecione' }, ...eligible.map((item) => ({ value: item.id, label: `${item.nome} (@${item.username})` }))];
@@ -436,7 +464,7 @@ function batchesPanel(onChanged) {
   cache.lotes.forEach((lote) => {
     const row = el('tr');
     const name = el('td');
-    name.append(el('p', 'max-w-[250px] truncate font-bold', lote.nome_arquivo), el('p', 'mt-1 text-[11px] text-slate-500', `${lote.total_itens} itens · ${formatDate(lote.data_upload)}`));
+    name.append(el('p', 'max-w-[250px] truncate font-bold', lote.nome_arquivo), el('p', 'mt-1 text-[11px] text-slate-500', `${lote.total_itens} itens · ${lote.modelo_nome || 'Modelo padrão'} v${lote.modelo_versao || 1} · ${formatDate(lote.data_upload)}`));
     const progress = el('td', 'min-w-[165px]');
     const numbers = el('div', 'mb-2 flex justify-between text-[11px]');
     numbers.append(el('span', 'font-bold', `${lote.avaliacoes_feitas}/${requiredReviews(lote)}`), el('span', 'text-slate-500', percent(lote.progresso)));
@@ -469,7 +497,7 @@ export async function renderAdmin() {
   const root = document.querySelector('#view-admin');
   clear(root).append(skeleton(4));
   try {
-    [cache.avaliadores, cache.lotes] = await Promise.all([api.avaliadores.list(), api.lotes.list()]);
+    [cache.avaliadores, cache.lotes, cache.modelos] = await Promise.all([api.avaliadores.list(), api.lotes.list(), api.modelos.list()]);
     const rerender = () => renderAdmin();
     const completed = cache.lotes.filter((lote) => lote.status === 'concluido').length;
     const reviews = cache.lotes.reduce((sum, lote) => sum + Number(lote.avaliacoes_feitas), 0);

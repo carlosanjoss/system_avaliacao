@@ -32,6 +32,14 @@ export const api = {
     resetPassword: (id) => request(`/avaliadores/${id}/resetar-senha`, { method: 'POST' }),
     remove: (id) => request(`/avaliadores/${id}`, { method: 'DELETE' })
   },
+  modelos: {
+    list: () => request('/modelos-avaliacao'),
+    get: (id) => request(`/modelos-avaliacao/${id}`),
+    create: (data) => request('/modelos-avaliacao', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id, data) => request(`/modelos-avaliacao/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    duplicate: (id, nome) => request(`/modelos-avaliacao/${id}/duplicar`, { method: 'POST', body: JSON.stringify({ nome }) }),
+    archive: (id) => request(`/modelos-avaliacao/${id}`, { method: 'DELETE' })
+  },
   lotes: {
     list: () => request('/lotes'),
     create: (data) => request('/lotes', { method: 'POST', body: JSON.stringify(data) }),

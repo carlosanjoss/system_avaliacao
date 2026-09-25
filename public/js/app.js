@@ -4,6 +4,7 @@ import { renderAvaliador, setupAvaliador } from './avaliador.js';
 import { renderAgreement, setupAgreement } from './agreement.js';
 import { renderLogin, renderPasswordChange } from './auth.js';
 import { renderExport } from './export.js';
+import { renderModelos } from './modelos.js';
 import { createRouter } from './router.js';
 import { toast } from './ui.js';
 
@@ -21,7 +22,7 @@ function updateUserDisplay() {
   document.querySelector('#profile-name').textContent = user.nome;
   document.querySelector('#profile-role').textContent = `${user.papel === 'admin' ? 'Administrador' : 'Avaliador'} · sair`;
   document.querySelector('#profile-avatar').textContent = user.nome.slice(0, 2).toUpperCase();
-  document.querySelectorAll('[data-route="admin"], [data-route="reconciliar"], [data-route="resultados"]').forEach((button) => button.classList.toggle('hidden', user.papel !== 'admin'));
+  document.querySelectorAll('[data-route="admin"], [data-route="modelos"], [data-route="reconciliar"], [data-route="resultados"]').forEach((button) => button.classList.toggle('hidden', user.papel !== 'admin'));
   document.querySelector('[data-route="avaliar"]').classList.toggle('hidden', user.papel !== 'avaliador');
 }
 
@@ -34,6 +35,7 @@ async function activate(authenticatedUser) {
   setupAgreement({ getProfile: () => ({ ...user, type: user.papel }) });
   const renderers = {
     admin: () => user.papel === 'admin' ? renderAdmin() : router.navigate('avaliar'),
+    modelos: () => user.papel === 'admin' ? renderModelos() : router.navigate('avaliar'),
     avaliar: () => user.papel === 'avaliador' ? renderAvaliador() : router.navigate('admin'),
     reconciliar: () => user.papel === 'admin' ? renderAgreement() : router.navigate('avaliar'),
     resultados: () => user.papel === 'admin' ? renderExport() : router.navigate('avaliar')

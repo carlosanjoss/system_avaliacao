@@ -46,12 +46,55 @@ CREATE TABLE IF NOT EXISTS categorias_odio (
   ordem INTEGER NOT NULL UNIQUE
 );
 
+CREATE TABLE IF NOT EXISTS modelos_avaliacao (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  chave_base TEXT NOT NULL,
+  nome TEXT NOT NULL,
+  descricao TEXT NOT NULL DEFAULT '',
+  versao INTEGER NOT NULL DEFAULT 1 CHECK (versao >= 1),
+  ativo INTEGER NOT NULL DEFAULT 1 CHECK (ativo IN (0, 1)),
+  sistema TEXT,
+  criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (chave_base, versao)
+);
+
+CREATE TABLE IF NOT EXISTS campos_modelo (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  modelo_id INTEGER NOT NULL REFERENCES modelos_avaliacao(id) ON DELETE CASCADE,
+  chave TEXT NOT NULL,
+  rotulo TEXT NOT NULL,
+  tipo TEXT NOT NULL CHECK (tipo IN ('unica', 'multipla', 'booleano', 'texto')),
+  nome_coluna TEXT NOT NULL,
+  obrigatorio INTEGER NOT NULL DEFAULT 1 CHECK (obrigatorio IN (0, 1)),
+  ordem INTEGER NOT NULL CHECK (ordem >= 1),
+  condicao_campo_id INTEGER REFERENCES campos_modelo(id) ON DELETE RESTRICT,
+  condicao_operador TEXT CHECK (condicao_operador IS NULL OR condicao_operador IN ('igual', 'diferente', 'contem', 'qualquer', 'respondido', 'nao_respondido')),
+  condicao_valores TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(condicao_valores)),
+  UNIQUE (modelo_id, chave),
+  UNIQUE (modelo_id, nome_coluna),
+  UNIQUE (modelo_id, ordem)
+);
+
+CREATE TABLE IF NOT EXISTS opcoes_campo (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  campo_id INTEGER NOT NULL REFERENCES campos_modelo(id) ON DELETE CASCADE,
+  valor TEXT NOT NULL,
+  rotulo TEXT NOT NULL,
+  cor TEXT NOT NULL DEFAULT 'teal',
+  ordem INTEGER NOT NULL CHECK (ordem >= 1),
+  encerra_fluxo INTEGER NOT NULL DEFAULT 0 CHECK (encerra_fluxo IN (0, 1)),
+  UNIQUE (campo_id, valor),
+  UNIQUE (campo_id, ordem)
+);
+
 CREATE TABLE IF NOT EXISTS lotes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   nome_arquivo TEXT NOT NULL,
   data_upload TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   coluna_conteudo TEXT NOT NULL,
+  colunas_contexto TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(colunas_contexto)),
   coluna_resultado TEXT NOT NULL,
+  modelo_avaliacao_id INTEGER REFERENCES modelos_avaliacao(id),
   tipo_avaliacao TEXT NOT NULL CHECK (tipo_avaliacao IN ('individual', 'dupla')),
   distribuicao_conjunta INTEGER NOT NULL DEFAULT 0 CHECK (distribuicao_conjunta IN (0, 1)),
   status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente', 'em_andamento', 'concluido'))
@@ -89,7 +132,7 @@ CREATE TABLE IF NOT EXISTS avaliacoes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   item_id INTEGER NOT NULL REFERENCES lote_itens(id) ON DELETE CASCADE,
   avaliador_id INTEGER NOT NULL REFERENCES avaliadores(id) ON DELETE RESTRICT,
-  classificacao TEXT NOT NULL CHECK (classificacao IN ('hate', 'nao_hate')),
+  classificacao TEXT,
   criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   atualizado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE (item_id, avaliador_id)
@@ -102,6 +145,21 @@ CREATE TABLE IF NOT EXISTS avaliacao_categorias (
   avaliacao_id INTEGER NOT NULL REFERENCES avaliacoes(id) ON DELETE CASCADE,
   categoria_id INTEGER NOT NULL REFERENCES categorias_odio(id) ON DELETE RESTRICT,
   PRIMARY KEY (avaliacao_id, categoria_id)
+);
+
+CREATE TABLE IF NOT EXISTS avaliacao_respostas (
+  avaliacao_id INTEGER NOT NULL REFERENCES avaliacoes(id) ON DELETE CASCADE,
+  campo_id INTEGER NOT NULL REFERENCES campos_modelo(id) ON DELETE RESTRICT,
+  valor_json TEXT NOT NULL CHECK (json_valid(valor_json)),
+  PRIMARY KEY (avaliacao_id, campo_id)
+);
+
+CREATE TABLE IF NOT EXISTS reconciliacoes_personalizadas (
+  item_id INTEGER PRIMARY KEY REFERENCES lote_itens(id) ON DELETE CASCADE,
+  respostas_json TEXT NOT NULL CHECK (json_valid(respostas_json)),
+  decidido_por INTEGER REFERENCES avaliadores(id) ON DELETE SET NULL,
+  criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  atualizado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS reconciliacoes (
@@ -127,4 +185,9 @@ INSERT OR IGNORE INTO categorias_odio (nome, ordem) VALUES
 
 INSERT OR IGNORE INTO schema_meta (versao) VALUES (2);
 
-PRAGMA user_version = 2;
+INSERT OR IGNORE INTO modelos_avaliacao (chave_base, nome, descricao, versao, ativo, sistema)
+VALUES ('discurso_odio', 'Discurso de ódio', 'Classificação binária com múltiplos tipos de ódio.', 1, 1, 'hate_v1');
+
+INSERT OR IGNORE INTO schema_meta (versao) VALUES (3);
+
+PRAGMA user_version = 3;

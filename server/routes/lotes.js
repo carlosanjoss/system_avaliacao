@@ -2,17 +2,20 @@ import { Router } from 'express';
 import { db, transaction } from '../db/db.js';
 import { HttpError, nonEmptyText, positiveInteger } from '../lib/http.js';
 import { requireAdmin, requireEvaluator } from '../lib/auth.js';
+import { getModel, sameResponses } from '../lib/models.js';
 
 export const lotesRouter = Router();
 
 const loteSelect = `
   SELECT l.*,
+    m.nome AS modelo_nome, m.versao AS modelo_versao, m.sistema AS modelo_sistema,
     COUNT(DISTINCT li.id) AS total_itens,
     COUNT(DISTINCT av.id) AS avaliacoes_feitas,
     COUNT(DISTINCT la.avaliador_id) AS total_avaliadores,
     GROUP_CONCAT(DISTINCT a.nome) AS avaliadores_nomes,
     GROUP_CONCAT(DISTINCT a.id) AS avaliadores_ids
   FROM lotes l
+  LEFT JOIN modelos_avaliacao m ON m.id = l.modelo_avaliacao_id
   LEFT JOIN lote_itens li ON li.lote_id = l.id
   LEFT JOIN avaliacoes av ON av.item_id = li.id
   LEFT JOIN lote_avaliadores la ON la.lote_id = l.id
@@ -63,9 +66,10 @@ function presentLots(rows, user) {
 
 function refreshStatus(loteId) {
   const stats = db.prepare(`
-    SELECT l.status, l.tipo_avaliacao, COUNT(DISTINCT li.id) AS itens, COUNT(DISTINCT av.id) AS feitas,
-      COUNT(DISTINCT la.avaliador_id) AS avaliadores
+    SELECT l.status, l.tipo_avaliacao, l.modelo_avaliacao_id, m.sistema AS modelo_sistema,
+      COUNT(DISTINCT li.id) AS itens, COUNT(DISTINCT av.id) AS feitas, COUNT(DISTINCT la.avaliador_id) AS avaliadores
     FROM lotes l
+    LEFT JOIN modelos_avaliacao m ON m.id = l.modelo_avaliacao_id
     LEFT JOIN lote_itens li ON li.lote_id = l.id
     LEFT JOIN avaliacoes av ON av.item_id = li.id
     LEFT JOIN lote_avaliadores la ON la.lote_id = l.id
@@ -76,15 +80,25 @@ function refreshStatus(loteId) {
   let status = 'pendente';
   if (stats.feitas > 0) status = 'em_andamento';
   if (stats.feitas >= required) {
-    const unresolved = stats.tipo_avaliacao === 'dupla' ? db.prepare(`
-      SELECT COUNT(*) AS total FROM (
-        SELECT li.id FROM lote_itens li
-        JOIN avaliacoes av ON av.item_id = li.id
-        LEFT JOIN reconciliacoes r ON r.item_id = li.id
-        WHERE li.lote_id = ? GROUP BY li.id
-        HAVING COUNT(av.id) = 2 AND COUNT(DISTINCT av.classificacao) = 2 AND MAX(r.item_id) IS NULL
-      )
-    `).get(loteId).total : 0;
+    let unresolved = 0;
+    if (stats.tipo_avaliacao === 'dupla') {
+      const items = db.prepare('SELECT id FROM lote_itens WHERE lote_id = ?').all(loteId);
+      for (const item of items) {
+        const reviews = db.prepare('SELECT id, classificacao FROM avaliacoes WHERE item_id = ? ORDER BY id').all(item.id);
+        if (reviews.length !== 2) continue;
+        let divergent;
+        if (stats.modelo_sistema === 'hate_v1') {
+          const categorySets = reviews.map((review) => db.prepare('SELECT categoria_id FROM avaliacao_categorias WHERE avaliacao_id = ? ORDER BY categoria_id').all(review.id).map((row) => row.categoria_id));
+          divergent = reviews[0].classificacao !== reviews[1].classificacao || JSON.stringify(categorySets[0]) !== JSON.stringify(categorySets[1]);
+        }
+        else {
+          const answers = reviews.map((review) => Object.fromEntries(db.prepare('SELECT c.chave, ar.valor_json FROM avaliacao_respostas ar JOIN campos_modelo c ON c.id = ar.campo_id WHERE ar.avaliacao_id = ?').all(review.id).map((row) => [row.chave, JSON.parse(row.valor_json)])));
+          divergent = !sameResponses(answers[0], answers[1]);
+        }
+        const reconciled = stats.modelo_sistema === 'hate_v1' ? db.prepare('SELECT 1 FROM reconciliacoes WHERE item_id = ?').get(item.id) : db.prepare('SELECT 1 FROM reconciliacoes_personalizadas WHERE item_id = ?').get(item.id);
+        if (divergent && !reconciled) unresolved += 1;
+      }
+    }
     if (!unresolved) status = 'concluido';
   }
   db.prepare('UPDATE lotes SET status = ? WHERE id = ?').run(status, loteId);
@@ -100,11 +114,18 @@ lotesRouter.get('/', (req, res) => {
 lotesRouter.post('/', requireAdmin, (req, res) => {
   const nomeArquivo = nonEmptyText(req.body.nomeArquivo, 'Nome do arquivo', 255);
   const colunaConteudo = nonEmptyText(req.body.colunaConteudo, 'Coluna de conteúdo', 255);
-  const colunaResultado = 'hate/no_hate';
+  const colunasContexto = [...new Set((req.body.colunasContexto || []).map((column) => String(column).trim()).filter(Boolean))].filter((column) => column !== colunaConteudo);
+  if (colunasContexto.length > 20) throw new HttpError(400, 'Selecione no máximo 20 colunas de contexto.');
+  const modelId = positiveInteger(req.body.modeloAvaliacaoId || db.prepare("SELECT id FROM modelos_avaliacao WHERE sistema = 'hate_v1' LIMIT 1").get()?.id, 'modeloAvaliacaoId');
+  const model = getModel(modelId);
+  if (!model.ativo) throw new HttpError(400, 'Selecione um modelo de avaliação ativo.');
+  const colunaResultado = model.campos[0]?.nomeColuna || 'resultado';
   const assignment = normalizeAssignment(req.body.tipoAvaliacao, req.body.avaliadoresAtribuidos);
   const linhas = req.body.linhas;
   if (!Array.isArray(linhas) || !linhas.length) throw new HttpError(400, 'O lote precisa ter ao menos uma linha válida.');
   if (linhas.length > 100000) throw new HttpError(413, 'O lote excede o limite de 100.000 linhas.');
+  const availableColumns = new Set(Object.keys(linhas[0]?.dadosOriginais || {}));
+  if (colunasContexto.some((column) => !availableColumns.has(column))) throw new HttpError(400, 'Uma ou mais colunas de contexto não existem no CSV.');
 
   const empty = [];
   const duplicate = [];
@@ -122,9 +143,9 @@ lotesRouter.post('/', requireAdmin, (req, res) => {
 
   const loteId = transaction(() => {
     const lote = db.prepare(`
-      INSERT INTO lotes (nome_arquivo, coluna_conteudo, coluna_resultado, tipo_avaliacao, distribuicao_conjunta)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(nomeArquivo, colunaConteudo, colunaResultado, assignment.tipoBanco, assignment.conjunta ? 1 : 0);
+      INSERT INTO lotes (nome_arquivo, coluna_conteudo, colunas_contexto, coluna_resultado, modelo_avaliacao_id, tipo_avaliacao, distribuicao_conjunta)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(nomeArquivo, colunaConteudo, JSON.stringify(colunasContexto), colunaResultado, modelId, assignment.tipoBanco, assignment.conjunta ? 1 : 0);
     const id = Number(lote.lastInsertRowid);
     const insertItem = db.prepare(`INSERT INTO lote_itens (lote_id, linha_index, conteudo, dados_originais) VALUES (?, ?, ?, ?)`);
     linhas.forEach((linha, index) => insertItem.run(id, Number(linha.linhaIndex) || index + 1, String(linha.conteudo).trim(), JSON.stringify(linha.dadosOriginais || {})));
@@ -158,7 +179,7 @@ lotesRouter.get('/:id/pendentes/:avaliadorId', requireEvaluator, (req, res) => {
   const includeReviewed = req.query.todos === '1';
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = 100;
-  const lote = db.prepare('SELECT distribuicao_conjunta FROM lotes WHERE id = ?').get(loteId);
+  const lote = db.prepare('SELECT distribuicao_conjunta, modelo_avaliacao_id, colunas_contexto FROM lotes WHERE id = ?').get(loteId);
   if (!lote) throw new HttpError(404, 'Lote não encontrado.');
   const assigned = db.prepare('SELECT 1 FROM lote_avaliadores WHERE lote_id = ? AND avaliador_id = ?').get(loteId, avaliadorId);
   if (!assigned) throw new HttpError(403, 'O lote não está atribuído a este avaliador.');
@@ -166,21 +187,26 @@ lotesRouter.get('/:id/pendentes/:avaliadorId', requireEvaluator, (req, res) => {
   const jointScope = lote.distribuicao_conjunta ? 'AND EXISTS (SELECT 1 FROM lote_item_avaliadores lia WHERE lia.item_id = li.id AND lia.avaliador_id = ?)' : '';
   const itemParams = [avaliadorId, loteId, ...(lote.distribuicao_conjunta ? [avaliadorId] : []), limit, (page - 1) * limit];
   const items = db.prepare(`
-    SELECT li.id, li.linha_index, li.conteudo, av.classificacao, av.id AS avaliacao_id,
+    SELECT li.id, li.linha_index, li.conteudo, li.dados_originais, av.classificacao, av.id AS avaliacao_id,
       COALESCE(json_group_array(ac.categoria_id) FILTER (WHERE ac.categoria_id IS NOT NULL), '[]') AS categorias
     FROM lote_itens li
     LEFT JOIN avaliacoes av ON av.item_id = li.id AND av.avaliador_id = ?
     LEFT JOIN avaliacao_categorias ac ON ac.avaliacao_id = av.id
     WHERE li.lote_id = ? ${jointScope} ${condition}
     GROUP BY li.id ORDER BY li.linha_index LIMIT ? OFFSET ?
-  `).all(...itemParams).map((row) => ({ ...row, categorias: JSON.parse(row.categorias) }));
+  `).all(...itemParams).map((row) => {
+    const respostas = row.avaliacao_id ? Object.fromEntries(db.prepare(`SELECT c.chave, ar.valor_json FROM avaliacao_respostas ar JOIN campos_modelo c ON c.id = ar.campo_id WHERE ar.avaliacao_id = ?`).all(row.avaliacao_id).map((answer) => [answer.chave, JSON.parse(answer.valor_json)])) : {};
+    const original = JSON.parse(row.dados_originais);
+    const contexto = Object.fromEntries(JSON.parse(lote.colunas_contexto || '[]').map((column) => [column, original[column] ?? '']));
+    return { ...row, dados_originais: undefined, categorias: JSON.parse(row.categorias), respostas, contexto };
+  });
   const statParams = [avaliadorId, loteId, ...(lote.distribuicao_conjunta ? [avaliadorId] : [])];
   const stats = db.prepare(`
     SELECT COUNT(*) AS total, COUNT(av.id) AS avaliados
     FROM lote_itens li LEFT JOIN avaliacoes av ON av.item_id = li.id AND av.avaliador_id = ?
     WHERE li.lote_id = ? ${jointScope}
   `).get(...statParams);
-  res.json({ items, ...stats, page, limit });
+  res.json({ items, ...stats, page, limit, modelo: getModel(lote.modelo_avaliacao_id) });
 });
 
 lotesRouter.patch('/:id', requireAdmin, (req, res) => {

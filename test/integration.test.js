@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-test('login, CSV, avaliação dupla, conjunta, reconciliação e exportação', async () => {
+test('login, CSV, modelos condicionais, contexto, avaliação dupla, conjunta, reconciliação e exportação', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'radar-avaliacao-'));
   process.env.NODE_ENV = 'test';
   process.env.DB_PATH = join(directory, 'teste.sqlite');
@@ -78,14 +78,20 @@ test('login, CSV, avaliação dupla, conjunta, reconciliação e exportação', 
     const sexismo = categories.find((category) => category.nome === 'Sexismo');
     assert.ok(etarismo && sexismo);
     await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: items.items[0].id, classificacao: 'hate', categorias: [etarismo.id, sexismo.id] }) }, firstSession.cookie);
-    await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: items.items[0].id, classificacao: 'nao_hate', categorias: [] }) }, secondSession.cookie);
+    const blindQueue = await json(`/lotes/${lote.id}/pendentes/${second.id}`, {}, secondSession.cookie);
+    const blindItem = blindQueue.items.find((item) => item.id === items.items[0].id);
+    assert.equal(blindItem.classificacao, null);
+    assert.deepEqual(blindItem.categorias, []);
+    await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: items.items[0].id, classificacao: 'hate', categorias: [categories[7].id] }) }, secondSession.cookie);
     await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: items.items[1].id, classificacao: 'nao_hate', categorias: [] }) }, firstSession.cookie);
     await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: items.items[1].id, classificacao: 'nao_hate', categorias: [] }) }, secondSession.cookie);
 
     const agreement = await json(`/lotes/${lote.id}/concordancia`, {}, adminSession.cookie);
     assert.equal(agreement.metricas.totalPareados, 2);
-    assert.equal(agreement.metricas.concordantes, 1);
+    assert.equal(agreement.metricas.concordantes, 2);
     assert.equal(agreement.divergencias.length, 1);
+    assert.equal(agreement.divergencias[0].conflito_classificacao, false);
+    assert.equal(agreement.divergencias[0].conflito_categorias, true);
     assert.equal(agreement.pendentesReconciliacao, 1);
     const beforeReconciliation = await json('/lotes', {}, adminSession.cookie);
     assert.equal(beforeReconciliation[0].status, 'em_andamento');
@@ -150,6 +156,53 @@ test('login, CSV, avaliação dupla, conjunta, reconciliação e exportação', 
     const jointCsv = await jointExportResponse.text();
     assert.match(jointCsv, /nao_hate/);
     assert.match(jointCsv, new RegExp(String(third.id)));
+
+    const customModel = await json('/modelos-avaliacao', {
+      method: 'POST',
+      body: JSON.stringify({
+        nome: 'Toxicidade contextual',
+        descricao: 'Fluxo condicional para testar avaliações personalizadas.',
+        campos: [
+          { chave: 'toxico', rotulo: 'O conteúdo é tóxico?', tipo: 'booleano', nomeColuna: 'toxico', obrigatorio: true },
+          { chave: 'tipo_toxicidade', rotulo: 'Qual é o tipo?', tipo: 'unica', nomeColuna: 'tipo_toxicidade', obrigatorio: true, opcoes: [{ rotulo: 'Discurso de ódio' }, { rotulo: 'Ofensa pessoal' }, { rotulo: 'Ameaça' }], condicao: { campoChave: 'toxico', operador: 'igual', valores: ['sim'] } },
+          { chave: 'grupos', rotulo: 'Quais grupos?', tipo: 'multipla', nomeColuna: 'grupos_atingidos', obrigatorio: true, opcoes: [{ rotulo: 'Racismo' }, { rotulo: 'Sexismo' }], condicao: { campoChave: 'tipo_toxicidade', operador: 'igual', valores: ['discurso_de_odio'] } }
+        ]
+      })
+    }, adminSession.cookie);
+    assert.equal(customModel.versao, 1);
+    assert.equal(customModel.campos[2].condicao.campoChave, 'tipo_toxicidade');
+
+    const customLot = await json('/lotes', {
+      method: 'POST',
+      body: JSON.stringify({
+        nomeArquivo: 'contextual.csv',
+        colunaConteudo: 'texto',
+        colunasContexto: ['autor', 'publicado_em'],
+        modeloAvaliacaoId: customModel.id,
+        tipoAvaliacao: 'dupla',
+        avaliadoresAtribuidos: [first.id, second.id],
+        linhas: [{ linhaIndex: 1, conteudo: 'Mensagem contextual', dadosOriginais: { id: 'c1', texto: 'Mensagem contextual', autor: 'perfil público', publicado_em: '2026-09-24' } }]
+      })
+    }, adminSession.cookie);
+    const firstCustomQueue = await json(`/lotes/${customLot.id}/pendentes/${first.id}`, {}, firstSession.cookie);
+    const secondCustomQueue = await json(`/lotes/${customLot.id}/pendentes/${second.id}`, {}, secondSession.cookie);
+    assert.deepEqual(firstCustomQueue.items[0].contexto, { autor: 'perfil público', publicado_em: '2026-09-24' });
+    assert.equal(firstCustomQueue.modelo.nome, 'Toxicidade contextual');
+    await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: firstCustomQueue.items[0].id, respostas: { toxico: 'sim', tipo_toxicidade: 'discurso_de_odio', grupos: ['racismo', 'sexismo'] } }) }, firstSession.cookie);
+    await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: secondCustomQueue.items[0].id, respostas: { toxico: 'sim', tipo_toxicidade: 'ofensa_pessoal' } }) }, secondSession.cookie);
+    const customAgreement = await json(`/lotes/${customLot.id}/concordancia`, {}, adminSession.cookie);
+    assert.equal(customAgreement.divergencias.length, 1);
+    assert.equal(customAgreement.pendentesReconciliacao, 1);
+    await json(`/reconciliacoes/${firstCustomQueue.items[0].id}`, { method: 'POST', body: JSON.stringify({ respostasFinais: { toxico: 'sim', tipo_toxicidade: 'discurso_de_odio', grupos: ['racismo'] } }) }, adminSession.cookie);
+    const customExportResponse = await fetch(`${base}/lotes/${customLot.id}/export.csv`, { headers: { Cookie: adminSession.cookie } });
+    assert.ok(customExportResponse.ok);
+    const customCsv = await customExportResponse.text();
+    assert.match(customCsv, /tipo_toxicidade/);
+    assert.match(customCsv, /grupos_atingidos/);
+    assert.match(customCsv, /Discurso de ódio/);
+    assert.match(customCsv, /perfil público/);
+    const versionTwo = await json(`/modelos-avaliacao/${customModel.id}`, { method: 'PUT', body: JSON.stringify({ nome: 'Toxicidade contextual', descricao: 'Versão revisada.', campos: customModel.campos }) }, adminSession.cookie);
+    assert.equal(versionTwo.versao, 2);
 
     const reset = await json(`/avaliadores/${first.id}/resetar-senha`, { method: 'POST' }, adminSession.cookie);
     assert.ok(reset.senhaTemporaria);

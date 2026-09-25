@@ -7,6 +7,7 @@ import { avaliacoesRouter } from './routes/avaliacoes.js';
 import { agreementRouter } from './routes/agreement.js';
 import { reconciliacoesRouter } from './routes/reconciliacoes.js';
 import { exportRouter } from './routes/export.js';
+import { modelosRouter } from './routes/modelos.js';
 import { HttpError } from './lib/http.js';
 import { authRouter } from './routes/auth.js';
 import { requireAuth } from './lib/auth.js';
@@ -31,6 +32,7 @@ app.get('/api/health', (req, res) => res.json({ status: 'ok', banco: 'sqlite' })
 app.use('/api/auth', authRouter);
 app.use('/api', requireAuth);
 app.use('/api/avaliadores', avaliadoresRouter);
+app.use('/api/modelos-avaliacao', modelosRouter);
 app.use('/api/lotes', agreementRouter);
 app.use('/api/lotes', lotesRouter);
 app.use('/api/avaliacoes', avaliacoesRouter);

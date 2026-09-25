@@ -17,8 +17,8 @@ export function setupAvaliador(value) {
 function handleKeyboard(event) {
   if (!session || document.querySelector('#view-avaliar').classList.contains('hidden')) return;
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
-  if (event.key === '1' && !event.altKey) selectClassification('hate');
-  if (event.key === '2' && !event.altKey) selectClassification('nao_hate');
+  if (session.queue.modelo?.sistema === 'hate_v1' && event.key === '1' && !event.altKey) selectClassification('hate');
+  if (session.queue.modelo?.sistema === 'hate_v1' && event.key === '2' && !event.altKey) selectClassification('nao_hate');
   if (event.altKey && /^[0-9]$/.test(event.key)) {
     const index = event.key === '0' ? 9 : Number(event.key) - 1;
     toggleCategory(categories[index]?.id);
@@ -88,15 +88,15 @@ async function openQueue(lote, review = false) {
   const profile = context.getProfile();
   clear(document.querySelector('#view-avaliar')).append(skeleton(4));
   try {
-    categories = categories.length ? categories : await api.categorias();
     const queue = await api.lotes.queue(lote.id, profile.id, review);
+    if (queue.modelo?.sistema === 'hate_v1') categories = categories.length ? categories : await api.categorias();
     if (!queue.items.length) {
       session = null;
       await renderAvaliador();
       toast(review ? 'Não há avaliações para revisar.' : 'Este lote não possui itens pendentes.');
       return;
     }
-    session = { lote, profile, review, queue, index: 0, classification: null, selectedCategories: new Set(), saving: false, autoSaveTimer: null };
+    session = { lote, profile, review, queue, index: 0, classification: null, selectedCategories: new Set(), responses: {}, saving: false, autoSaveTimer: null };
     renderAnnotationShell();
     loadCurrentItem();
   } catch (error) {
@@ -127,10 +127,21 @@ function renderAnnotationShell() {
 
   const body = el('div', 'p-5 sm:p-8');
   const position = el('div', 'mb-6 flex items-center justify-between');
-  position.append(el('span', 'pill bg-slate-500/10 text-slate-500', ''), el('span', 'text-[11px] font-bold text-slate-500', '2 Não Hate avança automaticamente · Enter salva Hate'));
+  const helper = session.queue.modelo?.sistema === 'hate_v1' ? '2 Não Hate avança automaticamente · Enter salva Hate' : 'Preencha os campos visíveis · Enter salva e avança';
+  position.append(el('span', 'pill bg-slate-500/10 text-slate-500', ''), el('span', 'text-[11px] font-bold text-slate-500', helper));
   position.firstChild.id = 'item-position';
   const content = el('p', 'min-h-[150px] whitespace-pre-wrap break-words rounded-2xl border border-slate-200 bg-slate-500/[.025] p-5 text-lg font-semibold leading-8 dark:border-white/[.08] sm:p-7 sm:text-xl');
   content.id = 'review-content';
+  const contextArea = el('div', 'mt-4 hidden grid gap-3 sm:grid-cols-2');
+  contextArea.id = 'context-area';
+  if (session.queue.modelo?.sistema !== 'hate_v1') {
+    body.append(position, content, contextArea, renderCustomForm());
+    const actions = buildActions();
+    body.append(actions);
+    card.append(progressHeader, body);
+    clear(root).append(top, card);
+    return;
+  }
   const prompt = el('p', 'mb-3 mt-7 text-xs font-extrabold uppercase tracking-[.12em] text-slate-500', 'Este conteúdo apresenta discurso de ódio?');
   const choices = el('div', 'flex flex-col gap-3 sm:flex-row');
   const hate = el('button', 'classification-card');
@@ -165,6 +176,13 @@ function renderAnnotationShell() {
   });
   categoryArea.append(categoryGrid);
 
+  const actions = buildActions();
+  body.append(position, content, contextArea, prompt, choices, categoryArea, actions);
+  card.append(progressHeader, body);
+  clear(root).append(top, card);
+}
+
+function buildActions() {
   const actions = el('div', 'mt-8 flex flex-col gap-3 border-t border-slate-200 pt-6 dark:border-white/[.07] sm:flex-row sm:items-center');
   const previous = el('button', 'button-secondary', '← Anterior');
   previous.id = 'previous-item';
@@ -179,9 +197,77 @@ function renderAnnotationShell() {
   save.type = 'button';
   save.addEventListener('click', saveReview);
   actions.append(previous, next, save);
-  body.append(position, content, prompt, choices, categoryArea, actions);
-  card.append(progressHeader, body);
-  clear(root).append(top, card);
+  return actions;
+}
+
+function fieldVisible(field) {
+  if (!field.condicao) return true;
+  const value = session.responses[field.condicao.campoChave];
+  const expected = field.condicao.valores.map(String);
+  const empty = value === undefined || value === null || value === '' || (Array.isArray(value) && !value.length);
+  if (field.condicao.operador === 'respondido') return !empty;
+  if (field.condicao.operador === 'nao_respondido') return empty;
+  if (field.condicao.operador === 'igual') return expected.includes(String(value));
+  if (field.condicao.operador === 'diferente') return !expected.includes(String(value));
+  const values = Array.isArray(value) ? value.map(String) : [String(value ?? '')];
+  if (field.condicao.operador === 'contem') return expected.every((item) => values.includes(item));
+  if (field.condicao.operador === 'qualquer') return expected.some((item) => values.includes(item));
+  return true;
+}
+
+function activeFields() {
+  const active = [];
+  for (const field of session.queue.modelo.campos) {
+    if (!fieldVisible(field)) continue;
+    active.push(field);
+    const selected = session.responses[field.chave];
+    if (field.tipo !== 'multipla' && field.opcoes.find((option) => option.valor === selected)?.encerraFluxo) break;
+  }
+  return active;
+}
+
+function renderCustomForm() {
+  const root = el('div', 'mt-7 space-y-6');
+  root.id = 'custom-form';
+  const refresh = () => {
+    const activeKeys = new Set(activeFields().map((field) => field.chave));
+    session.queue.modelo.campos.forEach((field) => { if (!activeKeys.has(field.chave)) delete session.responses[field.chave]; });
+    root.querySelectorAll('[data-custom-field]').forEach((node) => node.remove());
+    activeFields().forEach((field) => {
+      const section = el('fieldset', 'rounded-2xl border border-slate-200 p-4 dark:border-white/[.08]');
+      section.dataset.customField = field.chave;
+      section.append(el('legend', 'px-2 text-sm font-extrabold', `${field.rotulo}${field.obrigatorio ? ' *' : ''}`));
+      if (field.tipo === 'texto') {
+        const textarea = el('textarea', 'form-field min-h-24');
+        textarea.maxLength = 2000;
+        textarea.value = session.responses[field.chave] || '';
+        textarea.addEventListener('input', () => { session.responses[field.chave] = textarea.value; });
+        textarea.addEventListener('change', refresh);
+        section.append(textarea);
+      } else {
+        const choices = el('div', 'grid gap-2 sm:grid-cols-2 lg:grid-cols-3');
+        field.opcoes.forEach((option) => {
+          const button = el('button', 'category-chip', option.rotulo);
+          button.type = 'button';
+          const selected = field.tipo === 'multipla' ? (session.responses[field.chave] || []).includes(option.valor) : session.responses[field.chave] === option.valor;
+          button.classList.toggle('selected', selected);
+          button.addEventListener('click', () => {
+            if (field.tipo === 'multipla') {
+              const values = new Set(session.responses[field.chave] || []);
+              if (values.has(option.valor)) values.delete(option.valor); else values.add(option.valor);
+              session.responses[field.chave] = [...values];
+            } else session.responses[field.chave] = option.valor;
+            refresh();
+          });
+          choices.append(button);
+        });
+        section.append(choices);
+      }
+      root.append(section);
+    });
+  };
+  setTimeout(refresh, 0);
+  return root;
 }
 
 function loadCurrentItem() {
@@ -189,12 +275,28 @@ function loadCurrentItem() {
   const item = session.queue.items[session.index];
   session.classification = item.classificacao || null;
   session.selectedCategories = new Set(item.categorias || []);
+  session.responses = { ...(item.respostas || {}) };
   document.querySelector('#review-content').textContent = item.conteudo;
   document.querySelector('#item-position').textContent = `Linha ${item.linha_index} · ${session.index + 1}/${session.queue.items.length}`;
   document.querySelector('#previous-item').disabled = session.index === 0;
   document.querySelector('#next-item').disabled = session.index === session.queue.items.length - 1;
   document.querySelector('#save-review').textContent = item.avaliacao_id ? 'Atualizar e avançar' : 'Salvar e avançar';
-  updateSelections();
+  const contextArea = document.querySelector('#context-area');
+  if (contextArea) {
+    clear(contextArea);
+    Object.entries(item.contexto || {}).forEach(([label, value]) => {
+      const card = el('div', 'rounded-xl border border-slate-200 bg-slate-500/[.025] p-3 dark:border-white/[.07]');
+      card.append(el('p', 'text-[10px] font-extrabold uppercase tracking-wide text-slate-500', label), el('p', 'mt-1 whitespace-pre-wrap break-words text-sm', value || '—'));
+      contextArea.append(card);
+    });
+    contextArea.classList.toggle('hidden', !Object.keys(item.contexto || {}).length);
+  }
+  if (session.queue.modelo?.sistema === 'hate_v1') updateSelections();
+  else {
+    const existing = document.querySelector('#custom-form');
+    const replacement = renderCustomForm();
+    existing?.replaceWith(replacement);
+  }
 }
 
 function move(direction) {
@@ -207,16 +309,24 @@ function move(direction) {
 async function saveReview() {
   if (!session || session.saving) return;
   const item = session.queue.items[session.index];
-  if (!session.classification) return toast('Escolha Hate ou Não Hate.', 'error');
-  if (session.classification === 'hate' && !session.selectedCategories.size) return toast('Selecione ao menos uma categoria.', 'error');
+  const legacy = session.queue.modelo?.sistema === 'hate_v1';
+  if (legacy && !session.classification) return toast('Escolha Hate ou Não Hate.', 'error');
+  if (legacy && session.classification === 'hate' && !session.selectedCategories.size) return toast('Selecione ao menos uma categoria.', 'error');
+  if (!legacy) {
+    for (const field of activeFields()) {
+      if (!field.obrigatorio) continue;
+      const value = session.responses[field.chave];
+      if (value === undefined || value === null || value === '' || (Array.isArray(value) && !value.length)) return toast(`Responda: ${field.rotulo}`, 'error');
+    }
+  }
   cancelAutoSave();
   session.saving = true;
   const button = document.querySelector('#save-review');
   button.disabled = true;
   button.textContent = 'Salvando…';
-  document.querySelectorAll('[data-classification], [data-category]').forEach((control) => { control.disabled = true; });
+  document.querySelectorAll('[data-classification], [data-category], [data-custom-field] button, [data-custom-field] textarea').forEach((control) => { control.disabled = true; });
   try {
-    await api.avaliar({ itemId: item.id, avaliadorId: session.profile.id, classificacao: session.classification, categorias: [...session.selectedCategories] });
+    await api.avaliar(legacy ? { itemId: item.id, classificacao: session.classification, categorias: [...session.selectedCategories] } : { itemId: item.id, respostas: session.responses });
     session.saving = false;
     if (!item.avaliacao_id) session.queue.avaliados += 1;
     if (!session.review) {
@@ -226,6 +336,7 @@ async function saveReview() {
       item.avaliacao_id = item.avaliacao_id || true;
       item.classificacao = session.classification;
       item.categorias = [...session.selectedCategories];
+      item.respostas = { ...session.responses };
       session.index = Math.min(session.index + 1, session.queue.items.length - 1);
     }
     toast('Avaliação registrada.');
@@ -250,7 +361,7 @@ async function saveReview() {
     toast(error.message, 'error');
     button.disabled = false;
     button.textContent = 'Salvar e avançar';
-    document.querySelectorAll('[data-classification], [data-category]').forEach((control) => { control.disabled = false; });
+    document.querySelectorAll('[data-classification], [data-category], [data-custom-field] button, [data-custom-field] textarea').forEach((control) => { control.disabled = false; });
   }
 }
 
@@ -258,7 +369,7 @@ function batchCard(lote, profile) {
   const card = el('article', 'panel p-5');
   const top = el('div', 'flex items-start justify-between gap-4');
   const title = el('div', 'min-w-0');
-  const modeLabel = lote.distribuicao_conjunta ? 'avaliação em conjunto' : lote.tipo_avaliacao === 'dupla' ? 'avaliação dupla' : 'avaliação individual';
+  const modeLabel = lote.distribuicao_conjunta ? 'avaliação em conjunto' : lote.tipo_avaliacao === 'dupla' ? 'avaliação dupla cega' : 'avaliação individual';
   const ownTotal = Number(lote.itens_usuario ?? lote.total_itens);
   const ownDone = Number(lote.avaliacoes_usuario ?? 0);
   title.append(el('p', 'truncate text-sm font-extrabold', lote.nome_arquivo), el('p', 'mt-1 text-xs text-slate-500', `${ownTotal} itens na sua fila · ${modeLabel}`));

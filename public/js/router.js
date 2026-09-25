@@ -1,7 +1,8 @@
 const metadata = {
   admin: ['Visão geral', 'Acompanhe lotes e equipe em um só lugar'],
+  modelos: ['Modelos de avaliação', 'Crie perguntas, opções, colunas e fluxos condicionais'],
   avaliar: ['Espaço de avaliação', 'Classifique conteúdos com foco e agilidade'],
-  reconciliar: ['Reconciliação', 'Resolva divergências entre avaliações em dupla'],
+  reconciliar: ['Conflitos e adjudicação', 'Compare avaliações cegas e registre a decisão final'],
   resultados: ['Resultados', 'Exporte dados consolidados e métricas de concordância']
 };
 

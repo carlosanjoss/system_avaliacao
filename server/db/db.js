@@ -30,6 +30,12 @@ export function createDatabase(filename = process.env.DB_PATH || join(dataDir, '
   if (!loteColumns.has('distribuicao_conjunta')) {
     db.exec('ALTER TABLE lotes ADD COLUMN distribuicao_conjunta INTEGER NOT NULL DEFAULT 0 CHECK (distribuicao_conjunta IN (0, 1))');
   }
+  if (!loteColumns.has('modelo_avaliacao_id')) {
+    db.exec('ALTER TABLE lotes ADD COLUMN modelo_avaliacao_id INTEGER REFERENCES modelos_avaliacao(id)');
+  }
+  if (!loteColumns.has('colunas_contexto')) {
+    db.exec("ALTER TABLE lotes ADD COLUMN colunas_contexto TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(colunas_contexto))");
+  }
   const assignmentSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'lote_avaliadores'").get()?.sql || '';
   if (/ordem\s+IN\s*\(1,\s*2\)/i.test(assignmentSchema)) {
     db.exec(`
@@ -53,6 +59,46 @@ export function createDatabase(filename = process.env.DB_PATH || join(dataDir, '
   db.prepare("UPDATE categorias_odio SET nome = 'Classismo' WHERE nome = 'Aporofobia'").run();
   db.prepare("UPDATE categorias_odio SET nome = 'Gordofobia' WHERE nome = 'Body Shaming'").run();
   db.prepare("UPDATE categorias_odio SET nome = 'Sexismo' WHERE nome = 'Misoginia' AND NOT EXISTS (SELECT 1 FROM categorias_odio WHERE nome = 'Sexismo')").run();
+  const evaluationSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'avaliacoes'").get()?.sql || '';
+  if (/classificacao\s+TEXT\s+NOT\s+NULL/i.test(evaluationSchema)) {
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      BEGIN IMMEDIATE;
+      CREATE TABLE avaliacoes_nova (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id INTEGER NOT NULL REFERENCES lote_itens(id) ON DELETE CASCADE,
+        avaliador_id INTEGER NOT NULL REFERENCES avaliadores(id) ON DELETE RESTRICT,
+        classificacao TEXT,
+        criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        atualizado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (item_id, avaliador_id)
+      );
+      INSERT INTO avaliacoes_nova (id, item_id, avaliador_id, classificacao, criado_em, atualizado_em)
+      SELECT id, item_id, avaliador_id, classificacao, criado_em, atualizado_em FROM avaliacoes;
+      DROP TABLE avaliacoes;
+      ALTER TABLE avaliacoes_nova RENAME TO avaliacoes;
+      CREATE INDEX idx_avaliacoes_item ON avaliacoes(item_id, avaliador_id);
+      CREATE INDEX idx_avaliacoes_avaliador ON avaliacoes(avaliador_id, item_id);
+      COMMIT;
+      PRAGMA foreign_keys = ON;
+    `);
+  }
+  const defaultModel = db.prepare("SELECT id FROM modelos_avaliacao WHERE sistema = 'hate_v1' LIMIT 1").get();
+  if (defaultModel) {
+    db.prepare('UPDATE lotes SET modelo_avaliacao_id = ? WHERE modelo_avaliacao_id IS NULL').run(defaultModel.id);
+    const hasDefaultFields = db.prepare('SELECT 1 FROM campos_modelo WHERE modelo_id = ? LIMIT 1').get(defaultModel.id);
+    if (!hasDefaultFields) {
+      const primary = db.prepare(`INSERT INTO campos_modelo (modelo_id, chave, rotulo, tipo, nome_coluna, obrigatorio, ordem) VALUES (?, 'classificacao', 'Este conteúdo apresenta discurso de ódio?', 'unica', 'hate/no_hate', 1, 1)`).run(defaultModel.id);
+      const primaryId = Number(primary.lastInsertRowid);
+      db.prepare(`INSERT INTO opcoes_campo (campo_id, valor, rotulo, cor, ordem, encerra_fluxo) VALUES (?, 'hate', 'Hate', 'rose', 1, 0), (?, 'nao_hate', 'Não Hate', 'teal', 2, 1)`).run(primaryId, primaryId);
+      const secondary = db.prepare(`INSERT INTO campos_modelo (modelo_id, chave, rotulo, tipo, nome_coluna, obrigatorio, ordem, condicao_campo_id, condicao_operador, condicao_valores) VALUES (?, 'tipos_hate', 'Selecione uma ou mais categorias', 'multipla', 'tipos_hate', 1, 2, ?, 'igual', '["hate"]')`).run(defaultModel.id, primaryId);
+      const insertOption = db.prepare('INSERT INTO opcoes_campo (campo_id, valor, rotulo, cor, ordem) VALUES (?, ?, ?, ?, ?)');
+      db.prepare('SELECT nome, ordem FROM categorias_odio ORDER BY ordem').all().forEach((category) => {
+        const value = category.nome.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+        insertOption.run(Number(secondary.lastInsertRowid), value, category.nome, 'teal', category.ordem);
+      });
+    }
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessoes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -71,7 +117,8 @@ export function createDatabase(filename = process.env.DB_PATH || join(dataDir, '
     );
     CREATE INDEX IF NOT EXISTS idx_tentativas_login ON tentativas_login(username, tentado_em DESC);
     INSERT OR IGNORE INTO schema_meta (versao) VALUES (2);
-    PRAGMA user_version = 2;
+    INSERT OR IGNORE INTO schema_meta (versao) VALUES (3);
+    PRAGMA user_version = 3;
   `);
   const admin = db.prepare("SELECT id FROM avaliadores WHERE papel = 'admin' LIMIT 1").get();
   if (!admin) {
