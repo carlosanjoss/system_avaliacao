@@ -34,6 +34,8 @@
 
       <nav class="mt-10 space-y-1" aria-label="Navegação principal">
         <button class="nav-item active" data-route="admin"><span class="nav-icon">⌂</span><span>Visão geral</span></button>
+        <button class="nav-item" data-route="estatisticas"><span class="nav-icon">%</span><span>Estatísticas</span></button>
+        <button class="nav-item" data-route="auditoria"><span class="nav-icon">◎</span><span>Auditoria</span></button>
         <button class="nav-item" data-route="modelos"><span class="nav-icon">◇</span><span>Modelos</span></button>
         <button class="nav-item" data-route="avaliar"><span class="nav-icon">✓</span><span>Avaliar</span></button>
         <button class="nav-item" data-route="reconciliar"><span class="nav-icon">⇄</span><span>Conflitos</span><span id="conflict-badge" class="ml-auto hidden rounded-full bg-rose-400/15 px-2 py-0.5 text-xs font-bold text-rose-300"></span></button>
@@ -68,6 +70,8 @@
 
       <main class="mx-auto max-w-[1500px] px-5 py-7 sm:px-8 xl:px-10">
         <section id="view-admin" data-view></section>
+        <section id="view-estatisticas" data-view class="hidden"></section>
+        <section id="view-auditoria" data-view class="hidden"></section>
         <section id="view-modelos" data-view class="hidden"></section>
         <section id="view-avaliar" data-view class="hidden"></section>
         <section id="view-reconciliar" data-view class="hidden"></section>

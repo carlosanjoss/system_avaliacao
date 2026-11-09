@@ -1,5 +1,7 @@
 const metadata = {
   admin: ['Visão geral', 'Acompanhe lotes e equipe em um só lugar'],
+  estatisticas: ['Estatísticas', 'Percentuais gerais e detalhamento por arquivo CSV'],
+  auditoria: ['Auditoria das avaliações', 'Consulte as decisões registradas por avaliador e lote'],
   modelos: ['Modelos de avaliação', 'Crie perguntas, opções, colunas e fluxos condicionais'],
   avaliar: ['Espaço de avaliação', 'Classifique conteúdos com foco e agilidade'],
   reconciliar: ['Conflitos e adjudicação', 'Compare avaliações cegas e registre a decisão final'],
@@ -17,6 +19,7 @@ export function createRouter(renderers) {
     document.querySelectorAll('[data-route]').forEach((button) => button.classList.toggle('active', button.dataset.route === route));
     document.querySelector('#page-title').textContent = metadata[route][0];
     document.querySelector('#page-subtitle').textContent = metadata[route][1];
+    document.body.classList.remove('overflow-hidden');
     await renderers[route]();
   }
 

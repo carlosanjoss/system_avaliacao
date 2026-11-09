@@ -60,7 +60,10 @@ function panelHeader(title, subtitle, action) {
   const text = el('div');
   text.append(el('h2', 'section-title', title), el('p', 'mt-1 text-xs text-slate-500', subtitle));
   header.append(text);
-  if (action) header.append(action);
+  if (action) {
+    action.classList.add('w-full', 'sm:w-auto');
+    header.append(action);
+  }
   return header;
 }
 
@@ -88,7 +91,7 @@ function evaluatorModal(existing, onSaved) {
   usernameInput.autocomplete = 'off';
   usernameInput.placeholder = 'Ex.: ana.silva';
   usernameInput.value = existing?.username || '';
-  const actions = el('div', 'flex justify-end gap-3 pt-3');
+  const actions = el('div', 'flex flex-col-reverse gap-3 pt-3 sm:flex-row sm:justify-end');
   const cancel = el('button', 'button-secondary', 'Cancelar');
   cancel.type = 'button';
   cancel.addEventListener('click', dialog.destroy);
@@ -127,10 +130,10 @@ function evaluatorTable(onChanged) {
     return panel;
   }
   const wrap = el('div', 'table-wrap');
-  const table = el('table', 'data-table');
+  const table = el('table', 'data-table responsive-table');
   const thead = el('thead');
   const header = el('tr');
-  ['Avaliador', 'Contato', 'Lotes', 'Avaliações', 'Ações'].forEach((label) => header.append(el('th', '', label)));
+  ['Avaliador', 'Contato', 'Lotes', 'Avaliações', 'Progresso', 'Ações'].forEach((label) => header.append(el('th', '', label)));
   thead.append(header);
   const tbody = el('tbody');
   cache.avaliadores.forEach((evaluator) => {
@@ -143,7 +146,15 @@ function evaluatorTable(onChanged) {
     identityText.append(nameLine, el('span', 'mt-1 block text-[11px] text-slate-500', `@${evaluator.username || 'sem-usuario'}`));
     identityWrap.append(el('span', 'grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-teal-400/10 text-xs font-extrabold text-teal-500', evaluator.nome.slice(0, 2).toUpperCase()), identityText);
     identity.append(identityWrap);
-    row.append(identity, el('td', 'text-slate-500', evaluator.email), el('td', '', evaluator.lotes_atribuidos), el('td', '', evaluator.avaliacoes_realizadas));
+    const assigned = Number(evaluator.avaliacoes_atribuidas || 0);
+    const completed = Number(evaluator.avaliacoes_realizadas || 0);
+    row.append(
+      identity,
+      el('td', 'text-slate-500', evaluator.email),
+      el('td', '', evaluator.lotes_atribuidos),
+      el('td', '', `${completed}/${assigned}`),
+      el('td', 'font-bold text-slate-500', percent(assigned ? completed / assigned : 0))
+    );
     const actions = el('td');
     const group = el('div', 'flex gap-2');
     group.append(actionButton('Editar', () => evaluatorModal(evaluator, onChanged)), actionButton('Redefinir senha', async () => {
@@ -159,6 +170,7 @@ function evaluatorTable(onChanged) {
     }, true));
     actions.append(group);
     row.append(actions);
+    ['Avaliador', 'Contato', 'Lotes', 'Avaliações', 'Progresso', 'Ações'].forEach((label, index) => { row.children[index].dataset.label = label; });
     tbody.append(row);
   });
   table.append(thead, tbody);
@@ -391,7 +403,7 @@ function assignmentModal(lote, onSaved) {
   };
   typeField.select.addEventListener('change', updateFields);
   updateFields();
-  const actions = el('div', 'flex justify-end gap-3 pt-3');
+  const actions = el('div', 'flex flex-col-reverse gap-3 pt-3 sm:flex-row sm:justify-end');
   const cancel = el('button', 'button-secondary', 'Cancelar');
   cancel.type = 'button';
   cancel.addEventListener('click', dialog.destroy);
@@ -427,7 +439,7 @@ function batchesPanel(onChanged) {
     fileInput.click();
   });
   panel.append(panelHeader('Lotes de trabalho', 'Importe CSVs, acompanhe o progresso e gerencie atribuições.', upload), fileInput);
-  const drop = el('div', 'dropzone m-5');
+  const drop = el('div', 'dropzone m-3 sm:m-5');
   drop.append(el('p', 'text-sm font-extrabold', 'Solte arquivos CSV aqui'), el('p', 'mt-2 text-xs text-slate-500', 'UTF-8 com cabeçalho · um arquivo corresponde a um lote'));
   drop.addEventListener('click', () => {
     if (!cache.avaliadores.some((item) => item.ativo && item.username && item.tem_senha)) return toast('Cadastre ou edite um avaliador com usuário e senha antes de importar o CSV.', 'error');
@@ -455,7 +467,7 @@ function batchesPanel(onChanged) {
     return panel;
   }
   const wrap = el('div', 'table-wrap border-t border-slate-200 dark:border-white/[.07]');
-  const table = el('table', 'data-table');
+  const table = el('table', 'data-table responsive-table');
   const head = el('thead');
   const headRow = el('tr');
   ['Lote', 'Modo', 'Equipe', 'Progresso', 'Status', 'Ações'].forEach((label) => headRow.append(el('th', '', label)));
@@ -485,6 +497,7 @@ function batchesPanel(onChanged) {
     }, true));
     actions.append(group);
     row.append(actions);
+    ['Lote', 'Modo', 'Equipe', 'Progresso', 'Status', 'Ações'].forEach((label, index) => { row.children[index].dataset.label = label; });
     body.append(row);
   });
   table.append(head, body);

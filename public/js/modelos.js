@@ -48,7 +48,7 @@ function modelEditor(existing, reload) {
     clear(fieldsRoot);
     fields.forEach((field, index) => {
       const card = el('section', 'rounded-2xl border border-slate-200 bg-slate-500/[.025] p-4 dark:border-white/[.08]');
-      const header = el('div', 'mb-4 flex items-center justify-between gap-3');
+      const header = el('div', 'mb-4 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between');
       header.append(el('p', 'text-sm font-extrabold', `${index + 1}. ${field.rotulo || 'Nova pergunta'}`));
       const remove = el('button', 'button-danger !px-3 !py-2', 'Remover');
       remove.type = 'button';
@@ -107,12 +107,12 @@ function modelEditor(existing, reload) {
     });
   }
   renderFields();
-  const add = el('button', 'button-secondary', '+ Adicionar pergunta');
+  const add = el('button', 'button-secondary w-full sm:w-auto', '+ Adicionar pergunta');
   add.type = 'button';
   add.addEventListener('click', () => { fields.push(blankField(fields.length)); renderFields(); });
   const flow = el('div', 'rounded-2xl border border-teal-400/20 bg-teal-400/[.05] p-4');
   flow.append(el('p', 'text-xs font-extrabold text-teal-500', 'Como funciona o fluxo'), el('p', 'mt-2 text-xs leading-5 text-slate-500', 'Perguntas condicionais podem depender apenas de perguntas anteriores. Isso permite vários níveis sem criar ciclos. Campos ocultos são limpos automaticamente.'));
-  const actions = el('div', 'flex justify-end gap-3');
+  const actions = el('div', 'flex flex-col-reverse gap-3 sm:flex-row sm:justify-end');
   const cancel = el('button', 'button-secondary', 'Cancelar');
   cancel.type = 'button';
   cancel.addEventListener('click', dialog.destroy);
@@ -141,7 +141,7 @@ function flowPreview(model) {
   model.campos.forEach((field, index) => {
     const row = el('div', 'rounded-xl border border-slate-200 px-3 py-2 text-xs dark:border-white/[.07]');
     const condition = field.condicao ? `Se “${field.condicao.campoChave}” ${field.condicao.operador} ${field.condicao.valores.join(' / ') || ''} → ` : '';
-    row.append(el('span', 'font-extrabold text-teal-500', `${index + 1}. `), document.createTextNode(`${condition}${field.rotulo}`), el('span', 'ml-2 font-mono text-slate-500', field.nomeColuna));
+    row.append(el('span', 'font-extrabold text-teal-500', `${index + 1}. `), document.createTextNode(`${condition}${field.rotulo}`), el('span', 'ml-2 break-all font-mono text-slate-500', field.nomeColuna));
     root.append(row);
   });
   return root;
@@ -156,7 +156,7 @@ export async function renderModelos() {
     const heading = el('div', 'mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between');
     const title = el('div');
     title.append(el('p', 'eyebrow', 'Construtor de fluxo'), el('h2', 'mt-2 text-2xl font-extrabold tracking-tight', 'Modelos de avaliação'), el('p', 'mt-2 max-w-2xl text-sm leading-6 text-slate-500', 'Defina perguntas, opções, colunas do CSV e ramificações do tipo “se isso, então aquilo”.'));
-    const add = el('button', 'button-primary', '+ Novo modelo');
+    const add = el('button', 'button-primary w-full sm:w-auto', '+ Novo modelo');
     add.addEventListener('click', () => modelEditor(null, reload));
     heading.append(title, add);
     const grid = el('div', 'grid gap-4 xl:grid-cols-2');

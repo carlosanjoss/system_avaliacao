@@ -115,6 +115,12 @@ test('login, CSV, modelos condicionais, contexto, avaliação dupla, conjunta, r
     const lots = await json('/lotes', {}, adminSession.cookie);
     assert.equal(lots[0].status, 'concluido');
     assert.equal(lots[0].avaliacoes_feitas, 4);
+    const forbiddenAudit = await call('/avaliacoes/auditoria', {}, firstSession.cookie);
+    assert.equal(forbiddenAudit.response.status, 403);
+    const legacyAudit = await json(`/avaliacoes/auditoria?avaliadorId=${first.id}&loteId=${lote.id}`, {}, adminSession.cookie);
+    assert.equal(legacyAudit.total, 2);
+    assert.equal(legacyAudit.items.every((item) => item.avaliador_id === first.id && item.lote_id === lote.id), true);
+    assert.equal(legacyAudit.items.some((item) => item.respostas.some((answer) => answer.rotulo === 'Classificação' && answer.valor === 'Hate')), true);
 
     const joint = await json('/lotes', {
       method: 'POST',
@@ -190,6 +196,31 @@ test('login, CSV, modelos condicionais, contexto, avaliação dupla, conjunta, r
     assert.equal(firstCustomQueue.modelo.nome, 'Toxicidade contextual');
     await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: firstCustomQueue.items[0].id, respostas: { toxico: 'sim', tipo_toxicidade: 'discurso_de_odio', grupos: ['racismo', 'sexismo'] } }) }, firstSession.cookie);
     await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: secondCustomQueue.items[0].id, respostas: { toxico: 'sim', tipo_toxicidade: 'ofensa_pessoal' } }) }, secondSession.cookie);
+    const forbiddenStatistics = await call('/avaliacoes/estatisticas', {}, firstSession.cookie);
+    assert.equal(forbiddenStatistics.response.status, 403);
+    const statistics = await json('/avaliacoes/estatisticas', {}, adminSession.cookie);
+    const legacyStatistics = statistics.lots.find((item) => item.id === lote.id);
+    assert.equal(legacyStatistics.progress, 1);
+    assert.deepEqual(
+      { total: legacyStatistics.results.total, hate: legacyStatistics.results.hate, naoHate: legacyStatistics.results.naoHate, hatePercent: legacyStatistics.results.hatePercent },
+      { total: 4, hate: 2, naoHate: 2, hatePercent: 0.5 }
+    );
+    assert.equal(legacyStatistics.results.categories.find((item) => item.label === 'Etarismo').percent, 0.5);
+    const customStatistics = statistics.lots.find((item) => item.id === customLot.id);
+    const toxicityField = customStatistics.results.fields.find((field) => field.key === 'toxico');
+    const typeFieldStatistics = customStatistics.results.fields.find((field) => field.key === 'tipo_toxicidade');
+    const groupsField = customStatistics.results.fields.find((field) => field.key === 'grupos');
+    assert.equal(toxicityField.options.find((option) => option.value === 'sim').percent, 1);
+    assert.deepEqual(typeFieldStatistics.options.filter((option) => option.count).map((option) => option.percent), [0.5, 0.5]);
+    assert.equal(groupsField.coverage, 0.5);
+    assert.equal(groupsField.options.find((option) => option.value === 'racismo').percent, 1);
+    assert.deepEqual(
+      { total: statistics.overall.legacy.total, hate: statistics.overall.legacy.hate, naoHate: statistics.overall.legacy.naoHate },
+      { total: 12, hate: 2, naoHate: 10 }
+    );
+    const customAudit = await json(`/avaliacoes/auditoria?loteId=${customLot.id}&busca=Mensagem`, {}, adminSession.cookie);
+    assert.equal(customAudit.total, 2);
+    assert.equal(customAudit.items.some((item) => item.respostas.some((answer) => answer.rotulo === 'Quais grupos?' && answer.valor === 'Racismo | Sexismo')), true);
     const customAgreement = await json(`/lotes/${customLot.id}/concordancia`, {}, adminSession.cookie);
     assert.equal(customAgreement.divergencias.length, 1);
     assert.equal(customAgreement.pendentesReconciliacao, 1);
@@ -203,6 +234,35 @@ test('login, CSV, modelos condicionais, contexto, avaliação dupla, conjunta, r
     assert.match(customCsv, /perfil público/);
     const versionTwo = await json(`/modelos-avaliacao/${customModel.id}`, { method: 'PUT', body: JSON.stringify({ nome: 'Toxicidade contextual', descricao: 'Versão revisada.', campos: customModel.campos }) }, adminSession.cookie);
     assert.equal(versionTwo.versao, 2);
+
+    const rotationLots = [];
+    for (const platform of ['plataforma-a', 'plataforma-b']) {
+      rotationLots.push(await json('/lotes', {
+        method: 'POST',
+        body: JSON.stringify({
+          nomeArquivo: `${platform}.csv`,
+          colunaConteudo: 'texto',
+          tipoAvaliacao: 'individual',
+          avaliadoresAtribuidos: [third.id],
+          linhas: [1, 2].map((linhaIndex) => ({
+            linhaIndex,
+            conteudo: `${platform} conteúdo ${linhaIndex}`,
+            dadosOriginais: { id: `${platform}-${linhaIndex}`, texto: `${platform} conteúdo ${linhaIndex}` }
+          }))
+        })
+      }, adminSession.cookie));
+    }
+    const forbiddenAlternatingQueue = await call(`/lotes/fila-alternada/${third.id}`, {}, secondSession.cookie);
+    assert.equal(forbiddenAlternatingQueue.response.status, 403);
+    const firstAlternatingQueue = await json(`/lotes/fila-alternada/${third.id}`, {}, thirdSession.cookie);
+    assert.equal(firstAlternatingQueue.lote.id, rotationLots[0].id);
+    assert.equal(firstAlternatingQueue.items.length, 1);
+    await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: firstAlternatingQueue.items[0].id, classificacao: 'nao_hate', categorias: [] }) }, thirdSession.cookie);
+    const secondAlternatingQueue = await json(`/lotes/fila-alternada/${third.id}`, {}, thirdSession.cookie);
+    assert.equal(secondAlternatingQueue.lote.id, rotationLots[1].id);
+    await json('/avaliacoes', { method: 'POST', body: JSON.stringify({ itemId: secondAlternatingQueue.items[0].id, classificacao: 'nao_hate', categorias: [] }) }, thirdSession.cookie);
+    const thirdAlternatingQueue = await json(`/lotes/fila-alternada/${third.id}`, {}, thirdSession.cookie);
+    assert.equal(thirdAlternatingQueue.lote.id, rotationLots[0].id);
 
     const reset = await json(`/avaliadores/${first.id}/resetar-senha`, { method: 'POST' }, adminSession.cookie);
     assert.ok(reset.senhaTemporaria);

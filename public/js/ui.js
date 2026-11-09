@@ -90,7 +90,7 @@ export function confirmAction(title, text, confirmLabel = 'Confirmar') {
     let answered = false;
     const finish = (value) => { if (answered) return; answered = true; resolve(value); };
     dialog.onClose(() => finish(false));
-    const actions = el('div', 'flex justify-end gap-3');
+    const actions = el('div', 'flex flex-col-reverse gap-3 sm:flex-row sm:justify-end');
     const cancel = el('button', 'button-secondary', 'Cancelar');
     cancel.type = 'button';
     cancel.addEventListener('click', () => { finish(false); dialog.destroy(); });

@@ -47,9 +47,20 @@ export const api = {
     remove: (id) => request(`/lotes/${id}`, { method: 'DELETE' }),
     items: (id, page = 1) => request(`/lotes/${id}/itens?page=${page}`),
     queue: (id, avaliadorId, todos = false, page = 1) => request(`/lotes/${id}/pendentes/${avaliadorId}?todos=${todos ? 1 : 0}&page=${page}`),
+    alternatingQueue: (avaliadorId) => request(`/lotes/fila-alternada/${avaliadorId}`),
     agreement: (id) => request(`/lotes/${id}/concordancia`),
     exportUrl: (id) => `${base}/lotes/${id}/export.csv`
   },
+  auditoria: {
+    list: ({ page = 1, limit = 25, avaliadorId = '', loteId = '', busca = '' } = {}) => {
+      const params = new URLSearchParams({ page, limit });
+      if (avaliadorId) params.set('avaliadorId', avaliadorId);
+      if (loteId) params.set('loteId', loteId);
+      if (busca) params.set('busca', busca);
+      return request(`/avaliacoes/auditoria?${params}`);
+    }
+  },
+  estatisticas: () => request('/avaliacoes/estatisticas'),
   categorias: () => request('/avaliacoes/categorias'),
   avaliar: (data) => request('/avaliacoes', { method: 'POST', body: JSON.stringify(data) }),
   reconciliar: (itemId, data) => request(`/reconciliacoes/${itemId}`, { method: 'POST', body: JSON.stringify(data) })

@@ -64,6 +64,37 @@ function presentLots(rows, user) {
   });
 }
 
+function evaluatorQueue(loteId, avaliadorId, includeReviewed = false, page = 1, limit = 100) {
+  const lote = db.prepare('SELECT distribuicao_conjunta, modelo_avaliacao_id, colunas_contexto FROM lotes WHERE id = ?').get(loteId);
+  if (!lote) throw new HttpError(404, 'Lote não encontrado.');
+  const assigned = db.prepare('SELECT 1 FROM lote_avaliadores WHERE lote_id = ? AND avaliador_id = ?').get(loteId, avaliadorId);
+  if (!assigned) throw new HttpError(403, 'O lote não está atribuído a este avaliador.');
+  const condition = includeReviewed ? '' : 'AND av.id IS NULL';
+  const jointScope = lote.distribuicao_conjunta ? 'AND EXISTS (SELECT 1 FROM lote_item_avaliadores lia WHERE lia.item_id = li.id AND lia.avaliador_id = ?)' : '';
+  const itemParams = [avaliadorId, loteId, ...(lote.distribuicao_conjunta ? [avaliadorId] : []), limit, (page - 1) * limit];
+  const items = db.prepare(`
+    SELECT li.id, li.linha_index, li.conteudo, li.dados_originais, av.classificacao, av.id AS avaliacao_id,
+      COALESCE(json_group_array(ac.categoria_id) FILTER (WHERE ac.categoria_id IS NOT NULL), '[]') AS categorias
+    FROM lote_itens li
+    LEFT JOIN avaliacoes av ON av.item_id = li.id AND av.avaliador_id = ?
+    LEFT JOIN avaliacao_categorias ac ON ac.avaliacao_id = av.id
+    WHERE li.lote_id = ? ${jointScope} ${condition}
+    GROUP BY li.id ORDER BY li.linha_index LIMIT ? OFFSET ?
+  `).all(...itemParams).map((row) => {
+    const respostas = row.avaliacao_id ? Object.fromEntries(db.prepare(`SELECT c.chave, ar.valor_json FROM avaliacao_respostas ar JOIN campos_modelo c ON c.id = ar.campo_id WHERE ar.avaliacao_id = ?`).all(row.avaliacao_id).map((answer) => [answer.chave, JSON.parse(answer.valor_json)])) : {};
+    const original = JSON.parse(row.dados_originais);
+    const contexto = Object.fromEntries(JSON.parse(lote.colunas_contexto || '[]').map((column) => [column, original[column] ?? '']));
+    return { ...row, dados_originais: undefined, categorias: JSON.parse(row.categorias), respostas, contexto };
+  });
+  const statParams = [avaliadorId, loteId, ...(lote.distribuicao_conjunta ? [avaliadorId] : [])];
+  const stats = db.prepare(`
+    SELECT COUNT(*) AS total, COUNT(av.id) AS avaliados
+    FROM lote_itens li LEFT JOIN avaliacoes av ON av.item_id = li.id AND av.avaliador_id = ?
+    WHERE li.lote_id = ? ${jointScope}
+  `).get(...statParams);
+  return { items, ...stats, page, limit, modelo: getModel(lote.modelo_avaliacao_id) };
+}
+
 function refreshStatus(loteId) {
   const stats = db.prepare(`
     SELECT l.status, l.tipo_avaliacao, l.modelo_avaliacao_id, m.sistema AS modelo_sistema,
@@ -158,6 +189,33 @@ lotesRouter.post('/', requireAdmin, (req, res) => {
   res.status(201).json(presentLots([db.prepare(`${loteSelect} WHERE l.id = ? GROUP BY l.id`).get(loteId)], req.user)[0]);
 });
 
+lotesRouter.get('/fila-alternada/:avaliadorId', requireEvaluator, (req, res) => {
+  const avaliadorId = positiveInteger(req.params.avaliadorId, 'avaliadorId');
+  if (avaliadorId !== req.user.id) throw new HttpError(403, 'Você só pode acessar sua própria fila de avaliação.');
+  const selected = db.prepare(`
+    SELECT l.id, COALESCE(MAX(av.id), 0) AS ultima_avaliacao_id
+    FROM lotes l
+    JOIN lote_avaliadores la ON la.lote_id = l.id
+    JOIN lote_itens li ON li.lote_id = l.id
+    LEFT JOIN avaliacoes av ON av.item_id = li.id AND av.avaliador_id = la.avaliador_id
+    WHERE la.avaliador_id = ?
+      AND (
+        l.distribuicao_conjunta = 0
+        OR EXISTS (
+          SELECT 1 FROM lote_item_avaliadores lia
+          WHERE lia.item_id = li.id AND lia.avaliador_id = la.avaliador_id
+        )
+      )
+    GROUP BY l.id
+    HAVING SUM(CASE WHEN av.id IS NULL THEN 1 ELSE 0 END) > 0
+    ORDER BY ultima_avaliacao_id, l.id
+    LIMIT 1
+  `).get(avaliadorId);
+  if (!selected) return res.json({ lote: null, items: [], total: 0, avaliados: 0, page: 1, limit: 1, modelo: null });
+  const lote = presentLots([db.prepare(`${loteSelect} WHERE l.id = ? GROUP BY l.id`).get(selected.id)], req.user)[0];
+  res.json({ lote, ...evaluatorQueue(selected.id, avaliadorId, false, 1, 1) });
+});
+
 lotesRouter.get('/:id/itens', requireAdmin, (req, res) => {
   const loteId = positiveInteger(req.params.id);
   const page = Math.max(1, Number(req.query.page) || 1);
@@ -178,35 +236,7 @@ lotesRouter.get('/:id/pendentes/:avaliadorId', requireEvaluator, (req, res) => {
   if (avaliadorId !== req.user.id) throw new HttpError(403, 'Você só pode acessar sua própria fila de avaliação.');
   const includeReviewed = req.query.todos === '1';
   const page = Math.max(1, Number(req.query.page) || 1);
-  const limit = 100;
-  const lote = db.prepare('SELECT distribuicao_conjunta, modelo_avaliacao_id, colunas_contexto FROM lotes WHERE id = ?').get(loteId);
-  if (!lote) throw new HttpError(404, 'Lote não encontrado.');
-  const assigned = db.prepare('SELECT 1 FROM lote_avaliadores WHERE lote_id = ? AND avaliador_id = ?').get(loteId, avaliadorId);
-  if (!assigned) throw new HttpError(403, 'O lote não está atribuído a este avaliador.');
-  const condition = includeReviewed ? '' : 'AND av.id IS NULL';
-  const jointScope = lote.distribuicao_conjunta ? 'AND EXISTS (SELECT 1 FROM lote_item_avaliadores lia WHERE lia.item_id = li.id AND lia.avaliador_id = ?)' : '';
-  const itemParams = [avaliadorId, loteId, ...(lote.distribuicao_conjunta ? [avaliadorId] : []), limit, (page - 1) * limit];
-  const items = db.prepare(`
-    SELECT li.id, li.linha_index, li.conteudo, li.dados_originais, av.classificacao, av.id AS avaliacao_id,
-      COALESCE(json_group_array(ac.categoria_id) FILTER (WHERE ac.categoria_id IS NOT NULL), '[]') AS categorias
-    FROM lote_itens li
-    LEFT JOIN avaliacoes av ON av.item_id = li.id AND av.avaliador_id = ?
-    LEFT JOIN avaliacao_categorias ac ON ac.avaliacao_id = av.id
-    WHERE li.lote_id = ? ${jointScope} ${condition}
-    GROUP BY li.id ORDER BY li.linha_index LIMIT ? OFFSET ?
-  `).all(...itemParams).map((row) => {
-    const respostas = row.avaliacao_id ? Object.fromEntries(db.prepare(`SELECT c.chave, ar.valor_json FROM avaliacao_respostas ar JOIN campos_modelo c ON c.id = ar.campo_id WHERE ar.avaliacao_id = ?`).all(row.avaliacao_id).map((answer) => [answer.chave, JSON.parse(answer.valor_json)])) : {};
-    const original = JSON.parse(row.dados_originais);
-    const contexto = Object.fromEntries(JSON.parse(lote.colunas_contexto || '[]').map((column) => [column, original[column] ?? '']));
-    return { ...row, dados_originais: undefined, categorias: JSON.parse(row.categorias), respostas, contexto };
-  });
-  const statParams = [avaliadorId, loteId, ...(lote.distribuicao_conjunta ? [avaliadorId] : [])];
-  const stats = db.prepare(`
-    SELECT COUNT(*) AS total, COUNT(av.id) AS avaliados
-    FROM lote_itens li LEFT JOIN avaliacoes av ON av.item_id = li.id AND av.avaliador_id = ?
-    WHERE li.lote_id = ? ${jointScope}
-  `).get(...statParams);
-  res.json({ items, ...stats, page, limit, modelo: getModel(lote.modelo_avaliacao_id) });
+  res.json(evaluatorQueue(loteId, avaliadorId, includeReviewed, page));
 });
 
 lotesRouter.patch('/:id', requireAdmin, (req, res) => {

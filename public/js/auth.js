@@ -9,7 +9,7 @@ export function renderLogin(onAuthenticated) {
   const hero = el('section', 'login-hero text-white');
   const brand = el('div', 'relative z-10');
   brand.append(el('div', 'mb-8 grid h-14 w-14 place-items-center rounded-2xl bg-teal-400 text-xl font-extrabold text-slate-950 shadow-2xl shadow-teal-400/20', 'RO'), el('p', 'eyebrow !text-teal-300', 'RADAR ÓDIO · AVALIAÇÃO POR CSV'), el('h1', 'mt-5 max-w-2xl text-4xl font-extrabold leading-tight tracking-[-.04em] sm:text-5xl', 'Revisão humana, decisão por decisão.'), el('p', 'mt-5 max-w-xl text-sm leading-7 text-slate-400 sm:text-base', 'Importe seus conjuntos de dados, distribua as avaliações e gere CSVs consolidados com rastreabilidade individual.'));
-  const points = el('div', 'relative z-10 mt-10 grid gap-3 text-sm text-slate-300 sm:grid-cols-3');
+  const points = el('div', 'login-points relative z-10 mt-10 grid gap-3 text-sm text-slate-300 sm:grid-cols-3');
   ['Login individual', 'Hate multirrótulo', 'CSV consolidado'].forEach((text, index) => {
     const point = el('div', 'rounded-2xl border border-white/10 bg-white/[.035] p-4');
     point.append(el('span', 'mb-3 grid h-8 w-8 place-items-center rounded-xl bg-teal-400/10 font-bold text-teal-300', index + 1), el('span', 'font-bold', text));

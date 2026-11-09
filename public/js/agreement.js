@@ -80,7 +80,7 @@ function genericReconciliationModal(item, data, reload) {
     }
   };
   render();
-  const actions = el('div', 'mt-6 flex justify-end gap-3');
+  const actions = el('div', 'mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end');
   const cancel = el('button', 'button-secondary', 'Cancelar');
   cancel.addEventListener('click', dialog.destroy);
   const save = el('button', 'button-primary', 'Registrar decisão do adjudicador');
@@ -108,7 +108,7 @@ function reconciliationModal(item, data, categories, reload) {
   let decision = item.decisao_final || null;
   const selected = new Set(item.categorias_finais || []);
   const decisionLabel = el('p', 'mb-3 mt-6 text-xs font-extrabold uppercase tracking-[.12em] text-slate-500', 'Decisão final');
-  const decisionButtons = el('div', 'flex gap-3');
+  const decisionButtons = el('div', 'flex flex-col gap-3 sm:flex-row');
   const hate = el('button', 'classification-card', 'Hate');
   const safe = el('button', 'classification-card', 'Não Hate');
   hate.type = safe.type = 'button';
@@ -132,7 +132,7 @@ function reconciliationModal(item, data, categories, reload) {
     categoryGrid.append(button);
   });
   categoryArea.append(categoryGrid);
-  const actions = el('div', 'mt-7 flex justify-end gap-3 border-t border-slate-200 pt-5 dark:border-white/[.07]');
+  const actions = el('div', 'mt-7 flex flex-col-reverse gap-3 border-t border-slate-200 pt-5 dark:border-white/[.07] sm:flex-row sm:justify-end');
   const cancel = el('button', 'button-secondary', 'Cancelar');
   cancel.type = 'button';
   cancel.addEventListener('click', dialog.destroy);
@@ -185,12 +185,12 @@ async function loadAgreement(lote, root) {
         const row = el('div', 'flex flex-col gap-4 p-5 md:flex-row md:items-center');
         const text = el('div', 'min-w-0 flex-1');
         text.append(el('p', 'text-[11px] font-bold text-slate-500', `Linha ${item.linha_index}`), el('p', 'mt-1 line-clamp-2 text-sm font-semibold leading-6', item.conteudo));
-        const labels = el('div', 'flex shrink-0 items-center gap-2 text-xs font-extrabold');
+        const labels = el('div', 'flex flex-wrap items-center gap-2 text-xs font-extrabold md:shrink-0');
         if (data.modelo?.sistema === 'hate_v1' && item.conflito_classificacao) labels.append(el('span', 'pill bg-rose-400/10 text-rose-500', item.a1 === 'hate' ? 'Hate' : 'Não Hate'), el('span', 'text-slate-500', '×'), el('span', 'pill bg-teal-400/10 text-teal-500', item.a2 === 'hate' ? 'Hate' : 'Não Hate'));
         else if (data.modelo?.sistema === 'hate_v1') labels.append(el('span', 'pill bg-amber-400/10 text-amber-500', 'Categorias diferentes'));
         else labels.append(el('span', 'pill bg-amber-400/10 text-amber-500', 'Respostas diferentes'));
         const reconciled = data.modelo?.sistema === 'hate_v1' ? Boolean(item.decisao_final) : item.reconciliado;
-        const open = el('button', reconciled ? 'button-secondary' : 'button-primary', reconciled ? 'Editar decisão' : 'Adjudicar');
+        const open = el('button', `${reconciled ? 'button-secondary' : 'button-primary'} w-full md:w-auto`, reconciled ? 'Editar decisão' : 'Adjudicar');
         open.addEventListener('click', () => data.modelo?.sistema === 'hate_v1' ? reconciliationModal(item, data, categories, () => loadAgreement(lote, root)) : genericReconciliationModal(item, data, () => loadAgreement(lote, root)));
         row.append(text, labels, open);
         list.append(row);

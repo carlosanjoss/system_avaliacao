@@ -13,7 +13,21 @@ avaliadoresRouter.get('/', (req, res) => {
       CASE WHEN a.senha_hash IS NOT NULL THEN 1 ELSE 0 END AS tem_senha,
       a.senha_temporaria,
       COUNT(DISTINCT la.lote_id) AS lotes_atribuidos,
-      COUNT(DISTINCT av.id) AS avaliacoes_realizadas
+      COUNT(DISTINCT av.id) AS avaliacoes_realizadas,
+      (
+        SELECT COUNT(*)
+        FROM lote_avaliadores assigned
+        JOIN lotes l ON l.id = assigned.lote_id
+        JOIN lote_itens li ON li.lote_id = l.id
+        WHERE assigned.avaliador_id = a.id
+          AND (
+            l.distribuicao_conjunta = 0
+            OR EXISTS (
+              SELECT 1 FROM lote_item_avaliadores lia
+              WHERE lia.item_id = li.id AND lia.avaliador_id = a.id
+            )
+          )
+      ) AS avaliacoes_atribuidas
     FROM avaliadores a
     LEFT JOIN lote_avaliadores la ON la.avaliador_id = a.id
     LEFT JOIN avaliacoes av ON av.avaliador_id = a.id

@@ -84,19 +84,42 @@ function updateSelections() {
   }
 }
 
-async function openQueue(lote, review = false) {
+async function openAlternatingQueue() {
   const profile = context.getProfile();
   clear(document.querySelector('#view-avaliar')).append(skeleton(4));
   try {
-    const queue = await api.lotes.queue(lote.id, profile.id, review);
+    const result = await api.lotes.alternatingQueue(profile.id);
+    const { lote, ...queue } = result;
+    if (queue.modelo?.sistema === 'hate_v1') categories = categories.length ? categories : await api.categorias();
+    if (!lote || !queue.items.length) {
+      session = null;
+      await renderAvaliador();
+      toast('Você concluiu todos os itens atribuídos.');
+      return;
+    }
+    session = { lote, profile, review: false, queue, index: 0, classification: null, selectedCategories: new Set(), responses: {}, saving: false, autoSaveTimer: null };
+    renderAnnotationShell();
+    loadCurrentItem();
+  } catch (error) {
+    session = null;
+    toast(error.message, 'error');
+    await renderAvaliador();
+  }
+}
+
+async function openQueue(lote) {
+  const profile = context.getProfile();
+  clear(document.querySelector('#view-avaliar')).append(skeleton(4));
+  try {
+    const queue = await api.lotes.queue(lote.id, profile.id, true);
     if (queue.modelo?.sistema === 'hate_v1') categories = categories.length ? categories : await api.categorias();
     if (!queue.items.length) {
       session = null;
       await renderAvaliador();
-      toast(review ? 'Não há avaliações para revisar.' : 'Este lote não possui itens pendentes.');
+      toast('Não há avaliações para revisar.');
       return;
     }
-    session = { lote, profile, review, queue, index: 0, classification: null, selectedCategories: new Set(), responses: {}, saving: false, autoSaveTimer: null };
+    session = { lote, profile, review: true, queue, index: 0, classification: null, selectedCategories: new Set(), responses: {}, saving: false, autoSaveTimer: null };
     renderAnnotationShell();
     loadCurrentItem();
   } catch (error) {
@@ -110,7 +133,7 @@ function renderAnnotationShell() {
   const root = document.querySelector('#view-avaliar');
   const top = el('div', 'mb-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between');
   const info = el('div');
-  info.append(el('p', 'eyebrow', session.review ? 'Modo revisão' : 'Anotação em andamento'), el('h2', 'mt-2 text-xl font-extrabold tracking-tight', session.lote.nome_arquivo));
+  info.append(el('p', 'eyebrow', session.review ? 'Modo revisão' : 'Fila alternada automaticamente'), el('h2', 'mt-2 text-xl font-extrabold tracking-tight', session.lote.nome_arquivo));
   const exit = el('button', 'button-secondary', '← Voltar aos lotes');
   exit.addEventListener('click', () => { cancelAutoSave(); session = null; renderAvaliador(); });
   top.append(info, exit);
@@ -118,7 +141,7 @@ function renderAnnotationShell() {
   const card = el('article', 'panel mx-auto max-w-5xl overflow-hidden');
   const progressHeader = el('div', 'border-b border-slate-200 px-5 py-4 dark:border-white/[.07] sm:px-7');
   const progressLabels = el('div', 'mb-3 flex items-center justify-between text-xs');
-  progressLabels.append(el('span', 'font-extrabold', 'Progresso no lote'), el('span', 'text-slate-500', `${session.queue.avaliados} de ${session.queue.total} avaliados`));
+  progressLabels.append(el('span', 'font-extrabold', 'Progresso no lote'), el('span', 'text-slate-500', percent(session.queue.avaliados / session.queue.total)));
   const track = el('div', 'progress-track');
   const bar = el('div', 'progress-bar');
   bar.style.width = percent(session.queue.avaliados / session.queue.total);
@@ -126,7 +149,7 @@ function renderAnnotationShell() {
   progressHeader.append(progressLabels, track);
 
   const body = el('div', 'p-5 sm:p-8');
-  const position = el('div', 'mb-6 flex items-center justify-between');
+  const position = el('div', 'mb-6 flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between');
   const helper = session.queue.modelo?.sistema === 'hate_v1' ? '2 Não Hate avança automaticamente · Enter salva Hate' : 'Preencha os campos visíveis · Enter salva e avança';
   position.append(el('span', 'pill bg-slate-500/10 text-slate-500', ''), el('span', 'text-[11px] font-bold text-slate-500', helper));
   position.firstChild.id = 'item-position';
@@ -196,7 +219,8 @@ function buildActions() {
   save.id = 'save-review';
   save.type = 'button';
   save.addEventListener('click', saveReview);
-  actions.append(previous, next, save);
+  if (session.review) actions.append(previous, next);
+  actions.append(save);
   return actions;
 }
 
@@ -277,9 +301,11 @@ function loadCurrentItem() {
   session.selectedCategories = new Set(item.categorias || []);
   session.responses = { ...(item.respostas || {}) };
   document.querySelector('#review-content').textContent = item.conteudo;
-  document.querySelector('#item-position').textContent = `Linha ${item.linha_index} · ${session.index + 1}/${session.queue.items.length}`;
-  document.querySelector('#previous-item').disabled = session.index === 0;
-  document.querySelector('#next-item').disabled = session.index === session.queue.items.length - 1;
+  document.querySelector('#item-position').textContent = `Linha ${item.linha_index}`;
+  const previous = document.querySelector('#previous-item');
+  const next = document.querySelector('#next-item');
+  if (previous) previous.disabled = session.index === 0;
+  if (next) next.disabled = session.index === session.queue.items.length - 1;
   document.querySelector('#save-review').textContent = item.avaliacao_id ? 'Atualizar e avançar' : 'Salvar e avançar';
   const contextArea = document.querySelector('#context-area');
   if (contextArea) {
@@ -330,30 +356,40 @@ async function saveReview() {
     session.saving = false;
     if (!item.avaliacao_id) session.queue.avaliados += 1;
     if (!session.review) {
-      session.queue.items.splice(session.index, 1);
-      if (session.index >= session.queue.items.length) session.index = Math.max(0, session.queue.items.length - 1);
-    } else {
-      item.avaliacao_id = item.avaliacao_id || true;
-      item.classificacao = session.classification;
-      item.categorias = [...session.selectedCategories];
-      item.respostas = { ...session.responses };
-      session.index = Math.min(session.index + 1, session.queue.items.length - 1);
-    }
-    toast('Avaliação registrada.');
-    if (!session.queue.items.length) {
-      const remaining = await api.lotes.queue(session.lote.id, session.profile.id, false);
-      if (remaining.items.length) {
-        session.queue = remaining;
-        session.index = 0;
-        renderAnnotationShell();
-        loadCurrentItem();
-      } else {
+      toast('Avaliação registrada. Alternando a plataforma…');
+      try {
+        const result = await api.lotes.alternatingQueue(session.profile.id);
+        const { lote, ...queue } = result;
+        if (lote && queue.items.length) {
+          if (queue.modelo?.sistema === 'hate_v1') categories = categories.length ? categories : await api.categorias();
+          session.lote = lote;
+          session.queue = queue;
+          session.saving = false;
+          session.classification = null;
+          session.selectedCategories = new Set();
+          session.responses = {};
+          session.autoSaveTimer = null;
+          session.index = 0;
+          renderAnnotationShell();
+          loadCurrentItem();
+        } else {
+          session = null;
+          await renderAvaliador();
+          toast('Fila concluída. Excelente trabalho!');
+        }
+      } catch (nextError) {
         session = null;
         await renderAvaliador();
-        toast('Lote concluído. Excelente trabalho!');
+        toast(`A avaliação foi salva, mas o próximo item não pôde ser carregado: ${nextError.message}`, 'error');
       }
       return;
     }
+    item.avaliacao_id = item.avaliacao_id || true;
+    item.classificacao = session.classification;
+    item.categorias = [...session.selectedCategories];
+    item.respostas = { ...session.responses };
+    session.index = Math.min(session.index + 1, session.queue.items.length - 1);
+    toast('Avaliação atualizada.');
     renderAnnotationShell();
     loadCurrentItem();
   } catch (error) {
@@ -372,19 +408,17 @@ function batchCard(lote, profile) {
   const modeLabel = lote.distribuicao_conjunta ? 'avaliação em conjunto' : lote.tipo_avaliacao === 'dupla' ? 'avaliação dupla cega' : 'avaliação individual';
   const ownTotal = Number(lote.itens_usuario ?? lote.total_itens);
   const ownDone = Number(lote.avaliacoes_usuario ?? 0);
-  title.append(el('p', 'truncate text-sm font-extrabold', lote.nome_arquivo), el('p', 'mt-1 text-xs text-slate-500', `${ownTotal} itens na sua fila · ${modeLabel}`));
+  title.append(el('p', 'truncate text-sm font-extrabold', lote.nome_arquivo), el('p', 'mt-1 text-xs text-slate-500', modeLabel));
   top.append(title, statusPill(lote.status));
   const track = el('div', 'progress-track mt-5');
   const bar = el('div', 'progress-bar');
   bar.style.width = percent(ownDone / ownTotal);
   track.append(bar);
   const footer = el('div', 'mt-4 flex flex-wrap items-center gap-2');
-  footer.append(el('span', 'mr-auto text-xs font-bold text-slate-500', `${ownDone}/${ownTotal} avaliados`));
+  footer.append(el('span', 'mr-auto text-xs font-bold text-slate-500', percent(ownTotal ? ownDone / ownTotal : 0)));
   const review = el('button', 'button-secondary !px-3 !py-2', 'Revisar');
-  review.addEventListener('click', () => openQueue(lote, true));
-  const start = el('button', 'button-primary !px-3 !py-2', lote.status === 'concluido' ? 'Abrir' : 'Continuar');
-  start.addEventListener('click', () => openQueue(lote, false));
-  footer.append(review, start);
+  review.addEventListener('click', () => openQueue(lote));
+  footer.append(review);
   card.append(top, track, footer);
   return card;
 }
@@ -403,8 +437,16 @@ export async function renderAvaliador() {
   try {
     const lotes = await api.lotes.list();
     const assigned = lotes.filter((lote) => String(lote.avaliadores_ids || '').split(',').map(Number).includes(profile.id));
-    const heading = el('div', 'mb-6');
-    heading.append(el('p', 'eyebrow', 'Fila de trabalho'), el('h2', 'mt-2 text-2xl font-extrabold tracking-tight', `Olá, ${profile.nome.split(' ')[0]}`), el('p', 'mt-2 text-sm text-slate-500', 'Escolha um lote para continuar sua avaliação. Você pode revisar respostas já salvas.'));
+    const heading = el('div', 'mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between');
+    const headingText = el('div');
+    headingText.append(el('p', 'eyebrow', 'Fila de trabalho'), el('h2', 'mt-2 text-2xl font-extrabold tracking-tight', `Olá, ${profile.nome.split(' ')[0]}`), el('p', 'mt-2 max-w-2xl text-sm text-slate-500', 'A fila alterna automaticamente entre as plataformas atribuídas. Use os cartões abaixo apenas para acompanhar o progresso ou revisar respostas.'));
+    heading.append(headingText);
+    const hasPending = assigned.some((lote) => Number(lote.avaliacoes_usuario || 0) < Number(lote.itens_usuario ?? lote.total_itens));
+    if (hasPending) {
+      const start = el('button', 'button-primary w-full shrink-0 sm:w-auto', 'Continuar fila alternada');
+      start.addEventListener('click', openAlternatingQueue);
+      heading.append(start);
+    }
     const grid = el('div', 'grid gap-4 lg:grid-cols-2');
     assigned.forEach((lote) => grid.append(batchCard(lote, profile)));
     clear(root).append(heading, assigned.length ? grid : emptyState('Nenhum lote atribuído', 'Quando o administrador atribuir um lote a este perfil, ele aparecerá aqui.'));

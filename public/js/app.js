@@ -1,10 +1,12 @@
 import { api } from './api.js';
 import { renderAdmin } from './admin.js';
+import { renderAudit } from './audit.js';
 import { renderAvaliador, setupAvaliador } from './avaliador.js';
 import { renderAgreement, setupAgreement } from './agreement.js';
 import { renderLogin, renderPasswordChange } from './auth.js';
 import { renderExport } from './export.js';
 import { renderModelos } from './modelos.js';
+import { renderStatistics } from './statistics.js';
 import { createRouter } from './router.js';
 import { toast } from './ui.js';
 
@@ -22,7 +24,7 @@ function updateUserDisplay() {
   document.querySelector('#profile-name').textContent = user.nome;
   document.querySelector('#profile-role').textContent = `${user.papel === 'admin' ? 'Administrador' : 'Avaliador'} · sair`;
   document.querySelector('#profile-avatar').textContent = user.nome.slice(0, 2).toUpperCase();
-  document.querySelectorAll('[data-route="admin"], [data-route="modelos"], [data-route="reconciliar"], [data-route="resultados"]').forEach((button) => button.classList.toggle('hidden', user.papel !== 'admin'));
+  document.querySelectorAll('[data-route="admin"], [data-route="estatisticas"], [data-route="auditoria"], [data-route="modelos"], [data-route="reconciliar"], [data-route="resultados"]').forEach((button) => button.classList.toggle('hidden', user.papel !== 'admin'));
   document.querySelector('[data-route="avaliar"]').classList.toggle('hidden', user.papel !== 'avaliador');
 }
 
@@ -35,6 +37,8 @@ async function activate(authenticatedUser) {
   setupAgreement({ getProfile: () => ({ ...user, type: user.papel }) });
   const renderers = {
     admin: () => user.papel === 'admin' ? renderAdmin() : router.navigate('avaliar'),
+    estatisticas: () => user.papel === 'admin' ? renderStatistics() : router.navigate('avaliar'),
+    auditoria: () => user.papel === 'admin' ? renderAudit() : router.navigate('avaliar'),
     modelos: () => user.papel === 'admin' ? renderModelos() : router.navigate('avaliar'),
     avaliar: () => user.papel === 'avaliador' ? renderAvaliador() : router.navigate('admin'),
     reconciliar: () => user.papel === 'admin' ? renderAgreement() : router.navigate('avaliar'),
@@ -52,8 +56,14 @@ async function initialize() {
   });
   const sidebar = document.querySelector('#sidebar');
   const backdrop = document.querySelector('#sidebar-backdrop');
-  document.querySelector('#menu-button').addEventListener('click', () => { sidebar.classList.remove('-translate-x-full'); backdrop.classList.remove('hidden'); });
-  backdrop.addEventListener('click', () => { sidebar.classList.add('-translate-x-full'); backdrop.classList.add('hidden'); });
+  const setSidebarOpen = (open) => {
+    sidebar.classList.toggle('-translate-x-full', !open);
+    backdrop.classList.toggle('hidden', !open);
+    document.body.classList.toggle('overflow-hidden', open && window.innerWidth < 1024);
+  };
+  document.querySelector('#menu-button').addEventListener('click', () => setSidebarOpen(true));
+  backdrop.addEventListener('click', () => setSidebarOpen(false));
+  window.addEventListener('keydown', (event) => { if (event.key === 'Escape') setSidebarOpen(false); });
   window.addEventListener('auth:expired', () => location.reload(), { once: true });
 
   try {
